@@ -1502,6 +1502,9 @@ class Func_expression : public Expression
   int
   do_traverse(Traverse*);
 
+  Expression*
+  do_lower(Gogo*, Named_object*, Statement_inserter*, int);
+
   Type*
   do_type();
 

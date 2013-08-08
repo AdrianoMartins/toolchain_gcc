@@ -369,6 +369,13 @@ static tree ignore_attribute (tree *, tree, tree, int, bool *);
 static tree handle_no_split_stack_attribute (tree *, tree, tree, int, bool *);
 static tree handle_fnspec_attribute (tree *, tree, tree, int, bool *);
 
+static tree handle_always_patch_for_instrumentation_attribute (tree *, tree,
+                                                               tree, int,
+                                                               bool *);
+static tree handle_never_patch_for_instrumentation_attribute (tree *, tree,
+                                                              tree, int,
+                                                              bool *);
+
 static void check_function_nonnull (tree, int, tree *);
 static void check_nonnull_arg (void *, tree, unsigned HOST_WIDE_INT);
 static bool nonnull_check_p (tree, unsigned HOST_WIDE_INT);
@@ -738,6 +745,13 @@ const struct attribute_spec c_common_attribute_table[] =
      The name contains space to prevent its usage in source code.  */
   { "fn spec",	 	      1, 1, false, true, true,
 			      handle_fnspec_attribute, false },
+  { "always_patch_for_instrumentation", 0, 0, true,  false, false,
+                              handle_always_patch_for_instrumentation_attribute,
+                              false },
+  { "never_patch_for_instrumentation", 0, 0, true,  false, false,
+                              handle_never_patch_for_instrumentation_attribute,
+                              false },
+
   { NULL,                     0, 0, false, false, false, NULL, false }
 };
 
@@ -2651,11 +2665,21 @@ unsafe_conversion_p (tree type, tree expr, bool produce_warns)
 static void
 conversion_warning (tree type, tree expr)
 {
+  int warn_option;
   tree expr_type = TREE_TYPE (expr);
   location_t loc = EXPR_LOC_OR_HERE (expr);
 
-  if (!warn_conversion && !warn_sign_conversion)
+  if (!warn_conversion && !warn_sign_conversion && !warn_real_conversion)
     return;
+
+  /* When either type is a floating point type, warn with
+     -Wreal-conversion instead of -Wconversion (-Wreal-conversion is a
+     subset of -Wconversion that only warns for conversions of real
+     types to integral types).  */
+  warn_option = (warn_real_conversion
+		 && (FLOAT_TYPE_P (type) || FLOAT_TYPE_P (expr_type)))
+    ? OPT_Wreal_conversion
+    : OPT_Wconversion;
 
   switch (TREE_CODE (expr))
     {
@@ -2675,14 +2699,14 @@ conversion_warning (tree type, tree expr)
 	 can hold the values 0 and -1) doesn't lose information - but
 	 it does change the value.  */
       if (TYPE_PRECISION (type) == 1 && !TYPE_UNSIGNED (type))
-	warning_at (loc, OPT_Wconversion,
+	warning_at (loc, warn_option,
 		    "conversion to %qT from boolean expression", type);
       return;
 
     case REAL_CST:
     case INTEGER_CST:
       if (unsafe_conversion_p (type, expr, true))
-	warning_at (loc, OPT_Wconversion,
+	warning_at (loc, warn_option,
 		    "conversion to %qT alters %qT constant value",
 		    type, expr_type);
       return;
@@ -2701,7 +2725,7 @@ conversion_warning (tree type, tree expr)
 
     default: /* 'expr' is not a constant.  */
       if (unsafe_conversion_p (type, expr, true))
-	warning_at (loc, OPT_Wconversion,
+	warning_at (loc, warn_option,
 		    "conversion to %qT from %qT may alter its value",
 		    type, expr_type);
     }
@@ -6754,6 +6778,7 @@ handle_unused_attribute (tree *node, tree name, tree ARG_UNUSED (args),
 
       if (TREE_CODE (decl) == PARM_DECL
 	  || TREE_CODE (decl) == VAR_DECL
+	  || TREE_CODE (decl) == FIELD_DECL
 	  || TREE_CODE (decl) == FUNCTION_DECL
 	  || TREE_CODE (decl) == LABEL_DECL
 	  || TREE_CODE (decl) == TYPE_DECL)
@@ -8468,6 +8493,47 @@ handle_nonnull_attribute (tree *node, tree ARG_UNUSED (name),
 
   return NULL_TREE;
 }
+
+/* Handle a "always_patch_for_instrumentation" attribute; arguments as in
+   struct attribute_spec.handler.  */
+
+static tree
+handle_always_patch_for_instrumentation_attribute (tree *node, tree name,
+                                                   tree ARG_UNUSED (args),
+                                                   int ARG_UNUSED (flags),
+                                                   bool *no_add_attrs)
+{
+  if (TREE_CODE (*node) == FUNCTION_DECL)
+    {
+      /* Disable inlining if forced instrumentation.  */
+      DECL_UNINLINABLE (*node) = 1;
+    }
+  else
+    {
+      warning (OPT_Wattributes, "%qE attribute ignored", name);
+      *no_add_attrs = true;
+    }
+  return NULL_TREE;
+}
+
+
+/* Handle a "never_patch_for_instrumentation" attribute; arguments as in
+   struct attribute_spec.handler.  */
+
+static tree
+handle_never_patch_for_instrumentation_attribute (tree *node, tree name,
+                                                  tree ARG_UNUSED (args),
+                                                  int ARG_UNUSED (flags),
+                                                  bool *no_add_attrs)
+{
+  if (TREE_CODE (*node) != FUNCTION_DECL)
+    {
+      warning (OPT_Wattributes, "%qE attribute ignored", name);
+      *no_add_attrs = true;
+    }
+  return NULL_TREE;
+}
+
 
 /* Check the argument list of a function call for null in argument slots
    that are marked as requiring a non-null pointer argument.  The NARGS
@@ -11420,6 +11486,31 @@ keyword_is_decl_specifier (enum rid keyword)
     default:
       return false;
     }
+}
+
+/* Check for and warn about self-assignment or self-initialization.
+   LHS and RHS are the tree nodes for the left-hand side and right-hand side
+   of the assignment or initialization we are checking.
+   LOCATION is the source location for RHS.  */
+
+void
+check_for_self_assign (location_t location, tree lhs, tree rhs)
+{
+  if (lhs == NULL_TREE || rhs == NULL_TREE)
+    return;
+
+  /* Deal with TREE_LIST initializers (may be generated by class
+     member initialization in C++).  */
+  if (TREE_CODE (rhs) == TREE_LIST)
+    rhs = TREE_VALUE (rhs);
+
+  /* Only emit a warning if RHS is not a folded expression so that we don't
+     warn on something like x = x / 1.  */
+  if (!EXPR_FOLDED (rhs)
+      && operand_equal_p (lhs, rhs,
+                          OEP_PURE_SAME | OEP_ALLOW_NULL | OEP_ALLOW_NO_TYPE))
+    warning_at (location, OPT_Wself_assign, G_("%qE is assigned to itself"),
+                lhs);
 }
 
 /* Initialize language-specific-bits of tree_contains_struct.  */

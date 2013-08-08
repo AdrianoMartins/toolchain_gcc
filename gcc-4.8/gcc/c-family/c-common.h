@@ -996,6 +996,7 @@ extern void release_tree_vector (vec<tree, va_gc> *);
 extern vec<tree, va_gc> *make_tree_vector_single (tree);
 extern vec<tree, va_gc> *make_tree_vector_from_list (tree);
 extern vec<tree, va_gc> *make_tree_vector_copy (const vec<tree, va_gc> *);
+extern void check_for_self_assign (location_t, tree, tree);
 
 /* In c-gimplify.c  */
 extern void c_genericize (tree);

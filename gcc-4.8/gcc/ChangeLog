@@ -1,3 +1,9 @@
+2013-07-15  Sterling Augustine  <saugustine@google.com>
+
+        * dwarf2out.c (output_pubnames): Rework assertion.  Move logic
+        checking DW_TAG_enumerator and die_parent ...
+        (include_pubname_in_output): ...to here.
+
 2013-05-31  Release Manager
 
 	* GCC 4.8.1 released.

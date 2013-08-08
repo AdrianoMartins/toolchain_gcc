@@ -84,11 +84,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "ipa-prop.h"
 #include "statistics.h"
 #include "params.h"
+#include "toplev.h"
 #include "target.h"
 #include "flags.h"
 #include "dbgcnt.h"
 #include "tree-inline.h"
 #include "gimple-pretty-print.h"
+#include "l-ipo.h"
 #include "ipa-inline.h"
 
 /* Enumeration of all aggregate reductions we can do.  */
@@ -4754,7 +4756,8 @@ convert_callers_for_node (struct cgraph_node *node,
 		 xstrdup (cgraph_node_name (cs->caller)),
 		 xstrdup (cgraph_node_name (cs->callee)));
 
-      ipa_modify_call_arguments (cs, cs->call_stmt, *adjustments);
+      if (cs->call_stmt)
+        ipa_modify_call_arguments (cs, cs->call_stmt, *adjustments);
 
       pop_cfun ();
     }
@@ -4831,6 +4834,7 @@ modify_function (struct cgraph_node *node, ipa_parm_adjustment_vec adjustments)
   sra_ipa_reset_debug_stmts (adjustments);
   convert_callers (new_node, node->symbol.decl, adjustments);
   cgraph_make_node_local (new_node);
+
   return cfg_changed;
 }
 
@@ -4983,7 +4987,7 @@ ipa_early_sra (void)
 static bool
 ipa_early_sra_gate (void)
 {
-  return flag_ipa_sra && dbg_cnt (eipa_sra);
+  return flag_ipa_sra && !flag_dyn_ipa && dbg_cnt (eipa_sra);
 }
 
 struct gimple_opt_pass pass_early_ipa_sra =

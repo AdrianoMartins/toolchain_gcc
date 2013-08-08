@@ -50,6 +50,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "timevar.h"
 #include "pointer-set.h"
 #include "splay-tree.h"
+#include "cgraph.h"
 #include "plugin.h"
 #include "cgraph.h"
 
@@ -553,6 +554,7 @@ poplevel (int keep, int reverse, int functionbody)
   cp_label_binding *label_bind;
 
   bool subtime = timevar_cond_start (TV_NAME_LOOKUP);
+
  restart:
 
   block = NULL_TREE;
@@ -857,7 +859,7 @@ walk_namespaces (walk_namespaces_fn f, void* data)
    wrapup_global_declarations for this NAMESPACE.  */
 
 int
-wrapup_globals_for_namespace (tree name_space, void* data)
+wrapup_globals_for_namespace (tree name_space, void *data)
 {
   cp_binding_level *level = NAMESPACE_LEVEL (name_space);
   vec<tree, va_gc> *statics = level->static_decls;
@@ -2409,7 +2411,26 @@ duplicate_decls (tree newdecl, tree olddecl, bool newdecl_is_friend)
   /* The NEWDECL will no longer be needed.  Because every out-of-class
      declaration of a member results in a call to duplicate_decls,
      freeing these nodes represents in a significant savings.  */
-  ggc_free (newdecl);
+  {
+    tree clone;
+    bool found_clone = false;
+    /* Fix dangling reference.  */
+    FOR_EACH_CLONE (clone, newdecl)
+      {
+        if (DECL_CLONED_FUNCTION (clone) == newdecl)
+          {
+            found_clone = true;
+            break;
+          }
+        if (DECL_ABSTRACT_ORIGIN (clone) == newdecl)
+          {
+            found_clone = true;
+            break;
+          }
+      }
+    if (!found_clone)
+      ggc_free (newdecl);
+  }
 
   return olddecl;
 }
@@ -3637,6 +3658,7 @@ cxx_init_decl_processing (void)
 {
   tree void_ftype;
   tree void_ftype_ptr;
+  tree void_ftype_ptr_sizetype;
 
   /* Create all the identifiers we need.  */
   initialize_predefined_identifiers ();
@@ -3698,8 +3720,14 @@ cxx_init_decl_processing (void)
   void_ftype = build_function_type_list (void_type_node, NULL_TREE);
   void_ftype_ptr = build_function_type_list (void_type_node,
 					     ptr_type_node, NULL_TREE);
+  void_ftype_ptr_sizetype = build_function_type_list (void_type_node,
+                                                      ptr_type_node,
+                                                      size_type_node,
+                                                      NULL_TREE);
   void_ftype_ptr
     = build_exception_variant (void_ftype_ptr, empty_except_spec);
+  void_ftype_ptr_sizetype
+    = build_exception_variant (void_ftype_ptr_sizetype, empty_except_spec);
 
   /* C++ extensions */
 
@@ -3750,7 +3778,7 @@ cxx_init_decl_processing (void)
 
   {
     tree newattrs, extvisattr;
-    tree newtype, deltype;
+    tree newtype, deltype, deltype2;
     tree ptr_ftype_sizetype;
     tree new_eh_spec;
 
@@ -3788,8 +3816,10 @@ cxx_init_decl_processing (void)
     newtype = build_exception_variant (newtype, new_eh_spec);
     deltype = cp_build_type_attribute_variant (void_ftype_ptr, extvisattr);
     deltype = build_exception_variant (deltype, empty_except_spec);
+    deltype2 = build_exception_variant (void_ftype_ptr_sizetype, empty_except_spec);
     push_cp_library_fn (NEW_EXPR, newtype);
     push_cp_library_fn (VEC_NEW_EXPR, newtype);
+    push_cp_library_fn (DELETE_EXPR, deltype2);
     global_delete_fndecl = push_cp_library_fn (DELETE_EXPR, deltype);
     push_cp_library_fn (VEC_DELETE_EXPR, deltype);
 
@@ -5854,6 +5884,10 @@ make_rtl_for_nonlocal_decl (tree decl, tree init, const char* asmspec)
   else if (DECL_LANG_SPECIFIC (decl)
 	   && DECL_IMPLICIT_INSTANTIATION (decl))
     defer_p = 1;
+
+  /* Capture the current module info.  */
+  if (L_IPO_COMP_MODE)
+    varpool_node_for_decl (decl);
 
   /* If we're not deferring, go ahead and assemble the variable.  */
   if (!defer_p)
@@ -8046,9 +8080,18 @@ check_static_variable_definition (tree decl, tree type)
 	error ("in-class initialization of static data member %q#D of "
 	       "incomplete type", decl);
       else if (literal_type_p (type))
-	permerror (input_location,
-		   "%<constexpr%> needed for in-class initialization of "
-		   "static data member %q#D of non-integral type", decl);
+	{
+          /* FIXME google: This local modification allows us to
+             transition from C++98 to C++11 without moving static
+             const floats out of the class during the transition.  It
+             should not be forward-ported to a 4.8 branch, since by
+             then we should be able to just fix the code to use
+             constexpr.  */
+          pedwarn (input_location, OPT_Wpedantic,
+                   "%<constexpr%> needed for in-class initialization of "
+                   "static data member %q#D of non-integral type", decl);
+          return 0;
+	}
       else
 	error ("in-class initialization of static data member %q#D of "
 	       "non-literal type", decl);

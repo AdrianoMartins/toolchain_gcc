@@ -448,12 +448,13 @@ struct GTY(()) tree_base {
       unsigned lang_flag_5 : 1;
       unsigned lang_flag_6 : 1;
       unsigned saturating_flag : 1;
+      unsigned expr_folded_flag : 1;
 
       unsigned unsigned_flag : 1;
       unsigned packed_flag : 1;
       unsigned user_align : 1;
       unsigned nameless_flag : 1;
-      unsigned spare0 : 4;
+      unsigned spare0 : 3;
 
       unsigned spare1 : 8;
 
@@ -708,6 +709,13 @@ struct GTY(()) tree_base {
 
        SSA_NAME_IS_DEFAULT_DEF in
            SSA_NAME
+
+   expr_folded_flag:
+
+       EXPR_FOLDED in
+           all expressions
+           all decls
+           all constants
 
        DECL_NONLOCAL_FRAME in
 	   VAR_DECL
@@ -1371,6 +1379,10 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
 
 /* In fixed-point types, means a saturating type.  */
 #define TYPE_SATURATING(NODE) (TYPE_CHECK (NODE)->base.u.bits.saturating_flag)
+
+/* Nonzero in an expression, a decl, or a constant node if the node is
+   the result of a successful constant-folding.  */
+#define EXPR_FOLDED(NODE) ((NODE)->base.u.bits.expr_folded_flag)
 
 /* These flags are available for each language front end to use internally.  */
 #define TREE_LANG_FLAG_0(NODE) \
@@ -5732,7 +5744,10 @@ enum operand_equal_flag
 {
   OEP_ONLY_CONST = 1,
   OEP_PURE_SAME = 2,
-  OEP_CONSTANT_ADDRESS_OF = 4
+  OEP_CONSTANT_ADDRESS_OF = 4,
+  OEP_ALLOW_NULL = 8,  /* Allow NULL operands to be passed in and compared.  */
+  OEP_ALLOW_NO_TYPE = 16  /* Allow operands both of which don't have a type
+                            to be compared.  */
 };
 
 extern int operand_equal_p (const_tree, const_tree, unsigned int);

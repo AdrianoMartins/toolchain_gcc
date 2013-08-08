@@ -3756,6 +3756,18 @@ emit_associated_thunks (tree fn)
     {
       tree thunk;
 
+      if (L_IPO_COMP_MODE)
+        {
+          /* In LIPO mode, multiple copies of definitions for the same function
+             may exist, but assembler hash table keeps only one copy which might
+             have been deleted at this point.  */
+          struct cgraph_node *n = cgraph_get_create_node (fn);
+	  #ifdef FIXME_LIPO
+          insert_to_assembler_name_hash ((symtab_node)n);
+	  #endif
+          cgraph_link_node (n);
+        }
+
       for (thunk = DECL_THUNKS (fn); thunk; thunk = DECL_CHAIN (thunk))
 	{
 	  if (!THUNK_ALIAS (thunk))
@@ -6304,6 +6316,15 @@ cx_check_missing_mem_inits (tree fun, tree body, bool complain)
     }
 
   return bad;
+}
+
+/* Clear constexpr hash table  */
+
+void
+cp_clear_constexpr_hashtable (void)
+{
+  /* htab_delete (constexpr_fundef_table); */
+  constexpr_fundef_table = NULL;
 }
 
 /* We are processing the definition of the constexpr function FUN.

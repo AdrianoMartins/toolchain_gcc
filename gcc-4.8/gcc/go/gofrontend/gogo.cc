@@ -1607,6 +1607,14 @@ Lower_parse_tree::function(Named_object* no)
 {
   no->func_value()->set_closure_type();
 
+  // Make sure that every externally visible function has a
+  // descriptor, so that packages that import this one can refer to
+  // it.
+  if (!Gogo::is_hidden_name(no->name())
+      && !no->func_value()->is_method()
+      && !no->func_value()->is_descriptor_wrapper())
+    no->func_value()->descriptor(this->gogo_, no);
+
   go_assert(this->function_ == NULL);
   this->function_ = no;
   int t = no->func_value()->traverse(this);
@@ -1694,6 +1702,28 @@ Lower_parse_tree::expression(Expression** pexpr)
 void
 Gogo::lower_parse_tree()
 {
+  // Create a function descriptor for any function that is declared in
+  // this package.  This is so that we have a descriptor for functions
+  // written in assembly.  Gather the descriptors first so that we
+  // don't add declarations while looping over them.
+  std::vector<Named_object*> fndecls;
+  Bindings* b = this->package_->bindings();
+  for (Bindings::const_declarations_iterator p = b->begin_declarations();
+       p != b->end_declarations();
+       ++p)
+    {
+      Named_object* no = p->second;
+      if (no->is_function_declaration()
+	  && !no->func_declaration_value()->type()->is_method()
+	  && !Linemap::is_predeclared_location(no->location()))
+	fndecls.push_back(no);
+    }
+  for (std::vector<Named_object*>::const_iterator p = fndecls.begin();
+       p != fndecls.end();
+       ++p)
+    (*p)->func_declaration_value()->descriptor(this, *p);
+  fndecls.clear();
+
   Lower_parse_tree lower_parse_tree(this, NULL);
   this->traverse(&lower_parse_tree);
 }

@@ -32,6 +32,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "dumpfile.h"
 #include "value-prof.h"
 #include "predict.h"
+#include "l-ipo.h"
 
 /* Local functions, macros and variables.  */
 static const char *op_symbol (const_tree);
@@ -466,6 +467,7 @@ static void
 dump_location (pretty_printer *buffer, location_t loc)
 {
   expanded_location xloc = expand_location (loc);
+  int discriminator = get_discriminator_from_locus (loc);
 
   pp_character (buffer, '[');
   if (xloc.file)
@@ -474,6 +476,11 @@ dump_location (pretty_printer *buffer, location_t loc)
       pp_string (buffer, " : ");
     }
   pp_decimal_int (buffer, xloc.line);
+  if (discriminator)
+    {
+      pp_string (buffer, " discrim ");
+      pp_decimal_int (buffer, discriminator);
+    }
   pp_string (buffer, "] ");
 }
 
@@ -3143,8 +3150,13 @@ dump_function_header (FILE *dump_file, tree fdecl, int flags)
   else
     aname = "<unset-asm-name>";
 
-  fprintf (dump_file, "\n;; Function %s (%s, funcdef_no=%d",
-	   dname, aname, fun->funcdef_no);
+  if (L_IPO_COMP_MODE)
+    fprintf (dump_file, "\n;; Function %s (%s, funcdef_no=%d:%d",
+             dname, aname, FUNC_DECL_MODULE_ID (fun),
+             FUNC_DECL_FUNC_ID (fun));
+  else
+    fprintf (dump_file, "\n;; Function %s (%s, funcdef_no=%d",
+             dname, aname, fun->funcdef_no + (flag_dyn_ipa? 1 : 0));
   if (!(flags & TDF_NOUID))
     fprintf (dump_file, ", decl_uid=%d", DECL_UID (fdecl));
   if (node)

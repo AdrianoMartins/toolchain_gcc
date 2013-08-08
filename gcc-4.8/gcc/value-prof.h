@@ -33,7 +33,9 @@ enum hist_type
   HIST_TYPE_INDIR_CALL,   /* Tries to identify the function that is (almost)
 			    called in indirect call */
   HIST_TYPE_AVERAGE,	/* Compute average value (sum of all values).  */
-  HIST_TYPE_IOR		/* Used to compute expected alignment.  */
+  HIST_TYPE_IOR,	/* Used to compute expected alignment.  */
+  HIST_TYPE_INDIR_CALL_TOPN  /* Tries to identify the top N most frequently
+				called functions in indirect call.  */
 };
 
 #define COUNTER_FOR_HIST_TYPE(TYPE) ((int) (TYPE) + GCOV_FIRST_VALUE_COUNTER)
@@ -72,6 +74,8 @@ typedef vec<histogram_value> histogram_values;
 extern void gimple_find_values_to_profile (histogram_values *);
 extern bool gimple_value_profile_transformations (void);
 
+histogram_value gimple_alloc_histogram_value (struct function *, enum hist_type,
+					      gimple stmt, tree);
 histogram_value gimple_histogram_value (struct function *, gimple);
 histogram_value gimple_histogram_value_of_type (struct function *, gimple,
 						enum hist_type);
@@ -105,4 +109,3 @@ extern void branch_prob (void);
 extern void end_branch_prob (void);
 
 #endif	/* GCC_VALUE_PROF_H */
-

@@ -165,6 +165,9 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define GCC_GCOV_IO_H
 
 #if IN_LIBGCOV
+
+#undef FUNC_ID_WIDTH
+#undef FUNC_ID_MASK
 /* About the target */
 
 #if BITS_PER_UNIT == 8
@@ -172,34 +175,64 @@ typedef unsigned gcov_unsigned_t __attribute__ ((mode (SI)));
 typedef unsigned gcov_position_t __attribute__ ((mode (SI)));
 #if LONG_LONG_TYPE_SIZE > 32
 typedef signed gcov_type __attribute__ ((mode (DI)));
+#define FUNC_ID_WIDTH 32
+#define FUNC_ID_MASK ((1ll << FUNC_ID_WIDTH) - 1)
 typedef unsigned gcov_type_unsigned __attribute__ ((mode (DI)));
 #else
 typedef signed gcov_type __attribute__ ((mode (SI)));
+#define FUNC_ID_WIDTH 16
+#define FUNC_ID_MASK ((1 << FUNC_ID_WIDTH) - 1)
 typedef unsigned gcov_type_unsigned __attribute__ ((mode (SI)));
 #endif
-#else
+#else   /* BITS_PER_UNIT != 8  */
 #if BITS_PER_UNIT == 16
 typedef unsigned gcov_unsigned_t __attribute__ ((mode (HI)));
 typedef unsigned gcov_position_t __attribute__ ((mode (HI)));
 #if LONG_LONG_TYPE_SIZE > 32
 typedef signed gcov_type __attribute__ ((mode (SI)));
+#define FUNC_ID_WIDTH 32
+#define FUNC_ID_MASK ((1ll << FUNC_ID_WIDTH) - 1)
 typedef unsigned gcov_type_unsigned __attribute__ ((mode (SI)));
 #else
 typedef signed gcov_type __attribute__ ((mode (HI)));
+#define FUNC_ID_WIDTH 16
+#define FUNC_ID_MASK ((1 << FUNC_ID_WIDTH) - 1)
 typedef unsigned gcov_type_unsigned __attribute__ ((mode (HI)));
 #endif
-#else
+#else  /* BITS_PER_UNIT != 16  */
 typedef unsigned gcov_unsigned_t __attribute__ ((mode (QI)));
 typedef unsigned gcov_position_t __attribute__ ((mode (QI)));
 #if LONG_LONG_TYPE_SIZE > 32
 typedef signed gcov_type __attribute__ ((mode (HI)));
+#define FUNC_ID_WIDTH 32
+#define FUNC_ID_MASK ((1ll << FUNC_ID_WIDTH) - 1)
 typedef unsigned gcov_type_unsigned __attribute__ ((mode (HI)));
 #else
 typedef signed gcov_type __attribute__ ((mode (QI)));
+#define FUNC_ID_WIDTH 16
+#define FUNC_ID_MASK ((1 << FUNC_ID_WIDTH) - 1)
 typedef unsigned gcov_type_unsigned __attribute__ ((mode (QI)));
 #endif
+#endif /* BITS_PER_UNIT == 16  */ 
+
+#endif  /* BITS_PER_UNIT == 8  */
+
+#if LONG_LONG_TYPE_SIZE > 32
+#define GCOV_TYPE_ATOMIC_FETCH_ADD_FN __atomic_fetch_add_8
+#define GCOV_TYPE_ATOMIC_FETCH_ADD BUILT_IN_ATOMIC_FETCH_ADD_8
+#else
+#define GCOV_TYPE_ATOMIC_FETCH_ADD_FN __atomic_fetch_add_4
+#define GCOV_TYPE_ATOMIC_FETCH_ADD BUILT_IN_ATOMIC_FETCH_ADD_4
 #endif
-#endif
+
+#undef EXTRACT_MODULE_ID_FROM_GLOBAL_ID
+#undef EXTRACT_FUNC_ID_FROM_GLOBAL_ID
+#undef GEN_FUNC_GLOBAL_ID
+#define EXTRACT_MODULE_ID_FROM_GLOBAL_ID(gid) \
+                (gcov_unsigned_t)(((gid) >> FUNC_ID_WIDTH) & FUNC_ID_MASK)
+#define EXTRACT_FUNC_ID_FROM_GLOBAL_ID(gid) \
+                (gcov_unsigned_t)((gid) & FUNC_ID_MASK)
+#define GEN_FUNC_GLOBAL_ID(m,f) ((((gcov_type) (m)) << FUNC_ID_WIDTH) | (f))
 
 
 #if defined (TARGET_POSIX_IO)
@@ -213,6 +246,19 @@ typedef unsigned gcov_type_unsigned __attribute__ ((mode (QI)));
 
 typedef unsigned gcov_unsigned_t;
 typedef unsigned gcov_position_t;
+
+#if LONG_LONG_TYPE_SIZE > 32
+#define GCOV_TYPE_ATOMIC_FETCH_ADD_FN __atomic_fetch_add_8
+#define GCOV_TYPE_ATOMIC_FETCH_ADD BUILT_IN_ATOMIC_FETCH_ADD_8
+#else
+#define GCOV_TYPE_ATOMIC_FETCH_ADD_FN __atomic_fetch_add_4
+#define GCOV_TYPE_ATOMIC_FETCH_ADD BUILT_IN_ATOMIC_FETCH_ADD_4
+#endif
+#define PROFILE_GEN_EDGE_ATOMIC (flag_profile_gen_atomic == 1 || \
+                                 flag_profile_gen_atomic == 3)
+#define PROFILE_GEN_VALUE_ATOMIC (flag_profile_gen_atomic == 2 || \
+                                  flag_profile_gen_atomic == 3)
+
 /* gcov_type is typedef'd elsewhere for the compiler */
 #if IN_GCOV
 #define GCOV_LINKAGE static
@@ -221,6 +267,13 @@ typedef unsigned HOST_WIDEST_INT gcov_type_unsigned;
 #if IN_GCOV > 0
 #include <sys/types.h>
 #endif
+
+#define FUNC_ID_WIDTH HOST_BITS_PER_WIDE_INT/2
+#define FUNC_ID_MASK ((1L << FUNC_ID_WIDTH) - 1)
+#define EXTRACT_MODULE_ID_FROM_GLOBAL_ID(gid) (unsigned)(((gid) >> FUNC_ID_WIDTH) & FUNC_ID_MASK)
+#define EXTRACT_FUNC_ID_FROM_GLOBAL_ID(gid) (unsigned)((gid) & FUNC_ID_MASK)
+#define FUNC_GLOBAL_ID(m,f) ((((HOST_WIDE_INT) (m)) << FUNC_ID_WIDTH) | (f)
+
 #else /*!IN_GCOV */
 #define GCOV_TYPE_SIZE (LONG_LONG_TYPE_SIZE > 32 ? 64 : 32)
 #endif
@@ -249,13 +302,17 @@ typedef unsigned HOST_WIDEST_INT gcov_type_unsigned;
 #define gcov_position __gcov_position
 #define gcov_seek __gcov_seek
 #define gcov_rewrite __gcov_rewrite
+#define gcov_truncate __gcov_truncate
 #define gcov_is_error __gcov_is_error
 #define gcov_write_unsigned __gcov_write_unsigned
 #define gcov_write_counter __gcov_write_counter
 #define gcov_write_summary __gcov_write_summary
+#define gcov_write_module_info __gcov_write_module_info
 #define gcov_read_unsigned __gcov_read_unsigned
 #define gcov_read_counter __gcov_read_counter
 #define gcov_read_summary __gcov_read_summary
+#define gcov_read_module_info __gcov_read_module_info
+#define gcov_sort_n_vals __gcov_sort_n_vals
 
 /* Poison these, so they don't accidentally slip in.  */
 #pragma GCC poison gcov_write_string gcov_write_tag gcov_write_length
@@ -319,7 +376,11 @@ typedef unsigned HOST_WIDEST_INT gcov_type_unsigned;
 #define GCOV_TAG_PROGRAM_SUMMARY ((gcov_unsigned_t)0xa3000000)
 #define GCOV_TAG_SUMMARY_LENGTH(NUM)  \
         (1 + GCOV_COUNTERS_SUMMABLE * (10 + 3 * 2) + (NUM) * 5)
-
+#define GCOV_TAG_MODULE_INFO ((gcov_unsigned_t)0xab000000)
+#define GCOV_TAG_AFDO_FILE_NAMES ((gcov_unsigned_t)0xaa000000)
+#define GCOV_TAG_AFDO_FUNCTION ((gcov_unsigned_t)0xac000000)
+#define GCOV_TAG_AFDO_MODULE_GROUPING ((gcov_unsigned_t)0xae000000)
+#define GCOV_TAG_AFDO_WORKING_SET ((gcov_unsigned_t)0xaf000000)
 
 /* Counters that are collected.  */
 #define GCOV_COUNTER_ARCS 	0  /* Arc transitions.  */
@@ -342,9 +403,11 @@ typedef unsigned HOST_WIDEST_INT gcov_type_unsigned;
 				      counter.  */
 #define GCOV_COUNTER_IOR	7  /* IOR of the all values passed to
 				      counter.  */
-#define GCOV_LAST_VALUE_COUNTER 7  /* The last of counters used for value
+#define GCOV_COUNTER_ICALL_TOPNV 8 /* Top N value tracking for indirect calls */
+#define GCOV_LAST_VALUE_COUNTER 8  /* The last of counters used for value
 				      profiling.  */
-#define GCOV_COUNTERS		8
+#define GCOV_COUNTER_DIRECT_CALL 9 /* Direct call counts.  */
+#define GCOV_COUNTERS		10
 
 /* Number of counters used for value profiling.  */
 #define GCOV_N_VALUE_COUNTERS \
@@ -352,8 +415,11 @@ typedef unsigned HOST_WIDEST_INT gcov_type_unsigned;
 
   /* A list of human readable names of the counters */
 #define GCOV_COUNTER_NAMES	{"arcs", "interval", "pow2", "single", \
-      				 "delta", "indirect_call", "average", "ior"}
+				 "delta","indirect_call", "average", "ior", \
+				 "indirect_call_topn", "direct_call"}
 
+#define GCOV_ICALL_TOPN_VAL  2   /* Track two hottest callees */
+#define GCOV_ICALL_TOPN_NCOUNTS  9 /* The number of counter entries per icall callsite */
   /* Names of merge functions for counters.  */
 #define GCOV_MERGE_FUNCTIONS	{"__gcov_merge_add",	\
 				 "__gcov_merge_add",	\
@@ -362,7 +428,9 @@ typedef unsigned HOST_WIDEST_INT gcov_type_unsigned;
 				 "__gcov_merge_delta",  \
 				 "__gcov_merge_single", \
 				 "__gcov_merge_add",	\
-				 "__gcov_merge_ior"}
+				 "__gcov_merge_ior",	\
+				 "__gcov_merge_icall_topn",\
+                                 "__gcov_merge_dc" }
 
 /* Convert a counter index to a tag.  */
 #define GCOV_TAG_FOR_COUNTER(COUNT)				\
@@ -440,6 +508,52 @@ struct gcov_summary
   struct gcov_ctr_summary ctrs[GCOV_COUNTERS_SUMMABLE];
 };
 
+#define GCOV_MODULE_UNKNOWN_LANG  0
+#define GCOV_MODULE_C_LANG    1
+#define GCOV_MODULE_CPP_LANG  2
+#define GCOV_MODULE_FORT_LANG 3
+
+#define GCOV_MODULE_ASM_STMTS (1 << 16)
+#define GCOV_MODULE_LANG_MASK 0xffff
+
+/* Source module info. The data structure is used in
+   both runtime and profile-use phase. Make sure to allocate
+   enough space for the variable length member.  */
+struct gcov_module_info
+{
+  gcov_unsigned_t ident;
+  gcov_unsigned_t is_primary; /* this is overloaded to mean two things:
+				 (1) means FDO/LIPO in instrumented binary.
+				 (2) means IS_PRIMARY in persistent file or
+				     memory copy used in profile-use.  */
+  gcov_unsigned_t flags;      /* bit 0: is_exported,
+                                 bit 1: need to include all the auxiliary 
+                                 modules in use compilation.  */
+  gcov_unsigned_t lang; /* lower 16 bits encode the language, and the upper
+			   16 bits enocde other attributes, such as whether
+			   any assembler is present in the source, etc.  */
+  gcov_unsigned_t ggc_memory; /* memory needed for parsing in kb  */
+  char *da_filename;
+  char *source_filename;
+  gcov_unsigned_t num_quote_paths;
+  gcov_unsigned_t num_bracket_paths;
+  gcov_unsigned_t num_cpp_defines;
+  gcov_unsigned_t num_cpp_includes;
+  gcov_unsigned_t num_cl_args;
+  char *string_array[1];
+};
+
+extern struct gcov_module_info **module_infos;
+extern unsigned primary_module_id;
+#define SET_MODULE_INCLUDE_ALL_AUX(modu) ((modu->flags |= 0x2))
+#define MODULE_INCLUDE_ALL_AUX_FLAG(modu) ((modu->flags & 0x2))
+#define SET_MODULE_EXPORTED(modu) ((modu->flags |= 0x1))
+#define MODULE_EXPORTED_FLAG(modu) ((modu->flags & 0x1))
+#define PRIMARY_MODULE_EXPORTED                                         \
+  (MODULE_EXPORTED_FLAG (module_infos[0])				\
+   && !((module_infos[0]->lang & GCOV_MODULE_ASM_STMTS)			\
+	&& flag_ripa_disallow_asm_modules))
+
 /* Structures embedded in coveraged program.  The structures generated
    by write_profile must match these.  */
 
@@ -462,7 +576,7 @@ struct gcov_fn_info
   const struct gcov_info *key;		/* comdat key */
   gcov_unsigned_t ident;		/* unique ident of function */
   gcov_unsigned_t lineno_checksum;	/* function lineo_checksum */
-  gcov_unsigned_t cfg_checksum;		/* function cfg checksum */
+  gcov_unsigned_t cfg_checksum;	/* function cfg checksum */
   struct gcov_ctr_info ctrs[0];		/* instrumented counters */
 };
 
@@ -473,11 +587,12 @@ typedef void (*gcov_merge_fn) (gcov_type *, gcov_unsigned_t);
 struct gcov_info
 {
   gcov_unsigned_t version;	/* expected version number */
+  struct gcov_module_info *mod_info; /* addtional module info.  */
   struct gcov_info *next;	/* link to next, used by libgcov */
 
   gcov_unsigned_t stamp;	/* uniquifying time stamp */
   const char *filename;		/* output file name */
-
+  gcov_unsigned_t eof_pos;      /* end position of profile data */
   gcov_merge_fn merge[GCOV_COUNTERS];  /* merge functions (null for
 					  unused) */
   
@@ -486,8 +601,18 @@ struct gcov_info
 					          to function information  */
 };
 
+/* Information about a single imported module.  */
+struct dyn_imp_mod
+{
+  const struct gcov_info *imp_mod;
+  double weight;
+};
+
 /* Register a new object file module.  */
 extern void __gcov_init (struct gcov_info *) ATTRIBUTE_HIDDEN;
+
+/* Set sampling rate to RATE.  */
+extern void __gcov_set_sampling_rate (unsigned int rate);
 
 /* Called before fork, to avoid double counting.  */
 extern void __gcov_flush (void) ATTRIBUTE_HIDDEN;
@@ -511,13 +636,22 @@ extern void __gcov_merge_delta (gcov_type *, unsigned) ATTRIBUTE_HIDDEN;
 /* The merge function that just ors the counters together.  */
 extern void __gcov_merge_ior (gcov_type *, unsigned) ATTRIBUTE_HIDDEN;
 
+/* The merge function used for direct call counters.  */
+extern void __gcov_merge_dc (gcov_type *, unsigned) ATTRIBUTE_HIDDEN;
+
+/* The merge function used for indirect call counters.  */
+extern void __gcov_merge_icall_topn (gcov_type *, unsigned) ATTRIBUTE_HIDDEN;
+
 /* The profiler functions.  */
 extern void __gcov_interval_profiler (gcov_type *, gcov_type, int, unsigned);
 extern void __gcov_pow2_profiler (gcov_type *, gcov_type);
 extern void __gcov_one_value_profiler (gcov_type *, gcov_type);
 extern void __gcov_indirect_call_profiler (gcov_type *, gcov_type, void *, void *);
+extern void __gcov_indirect_call_topn_profiler (void *, void *, gcov_unsigned_t) ATTRIBUTE_HIDDEN;
+extern void __gcov_direct_call_profiler (void *, void *, gcov_unsigned_t) ATTRIBUTE_HIDDEN;
 extern void __gcov_average_profiler (gcov_type *, gcov_type);
 extern void __gcov_ior_profiler (gcov_type *, gcov_type);
+extern void __gcov_sort_n_vals (gcov_type *value_array, int n);
 
 #ifndef inhibit_libc
 /* The wrappers around some library functions..  */
@@ -586,6 +720,10 @@ static int gcov_is_error (void);
 GCOV_LINKAGE gcov_unsigned_t gcov_read_unsigned (void) ATTRIBUTE_HIDDEN;
 GCOV_LINKAGE gcov_type gcov_read_counter (void) ATTRIBUTE_HIDDEN;
 GCOV_LINKAGE void gcov_read_summary (struct gcov_summary *) ATTRIBUTE_HIDDEN;
+#if !IN_LIBGCOV && IN_GCOV != 1
+GCOV_LINKAGE void gcov_read_module_info (struct gcov_module_info *mod_info,
+					 gcov_unsigned_t len) ATTRIBUTE_HIDDEN;
+#endif
 
 #if IN_LIBGCOV
 /* Available only in libgcov */
@@ -595,8 +733,15 @@ GCOV_LINKAGE void gcov_write_tag_length (gcov_unsigned_t, gcov_unsigned_t)
 GCOV_LINKAGE void gcov_write_summary (gcov_unsigned_t /*tag*/,
 				      const struct gcov_summary *)
     ATTRIBUTE_HIDDEN;
+
+GCOV_LINKAGE void gcov_write_module_infos (struct gcov_info *mod_info)
+    ATTRIBUTE_HIDDEN;
+GCOV_LINKAGE const struct dyn_imp_mod **
+gcov_get_sorted_import_module_array (struct gcov_info *mod_info, unsigned *len)
+    ATTRIBUTE_HIDDEN;
 static void gcov_rewrite (void);
 GCOV_LINKAGE void gcov_seek (gcov_position_t /*position*/) ATTRIBUTE_HIDDEN;
+GCOV_LINKAGE void gcov_truncate (void) ATTRIBUTE_HIDDEN;
 #else
 /* Available outside libgcov */
 GCOV_LINKAGE const char *gcov_read_string (void);
@@ -627,7 +772,6 @@ GCOV_LINKAGE time_t gcov_time (void);
 static inline gcov_position_t
 gcov_position (void)
 {
-  gcc_assert (gcov_var.mode > 0);
   return gcov_var.start + gcov_var.offset;
 }
 

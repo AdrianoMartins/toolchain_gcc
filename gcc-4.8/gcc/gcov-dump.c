@@ -29,6 +29,7 @@ along with Gcov; see the file COPYING3.  If not see
 #include "gcov-io.c"
 
 static void dump_gcov_file (const char *);
+static int dump_aux_modules (const char *);
 static void print_prefix (const char *, unsigned, gcov_position_t);
 static void print_usage (void);
 static void print_version (void);
@@ -38,6 +39,7 @@ static void tag_arcs (const char *, unsigned, unsigned);
 static void tag_lines (const char *, unsigned, unsigned);
 static void tag_counters (const char *, unsigned, unsigned);
 static void tag_summary (const char *, unsigned, unsigned);
+static void tag_module_info (const char *, unsigned, unsigned);
 extern int main (int, char **);
 
 typedef struct tag_format
@@ -49,6 +51,7 @@ typedef struct tag_format
 
 static int flag_dump_contents = 0;
 static int flag_dump_positions = 0;
+static int flag_dump_aux_modules_only = 0;
 
 static const struct option options[] =
 {
@@ -70,6 +73,7 @@ static const tag_format_t tag_table[] =
   {GCOV_TAG_LINES, "LINES", tag_lines},
   {GCOV_TAG_OBJECT_SUMMARY, "OBJECT_SUMMARY", tag_summary},
   {GCOV_TAG_PROGRAM_SUMMARY, "PROGRAM_SUMMARY", tag_summary},
+  {GCOV_TAG_MODULE_INFO, "MODULE INFO", tag_module_info},
   {0, NULL, NULL}
 };
 
@@ -93,7 +97,7 @@ main (int argc ATTRIBUTE_UNUSED, char **argv)
 
   diagnostic_initialize (global_dc, 0);
 
-  while ((opt = getopt_long (argc, argv, "hlpv", options, NULL)) != -1)
+  while ((opt = getopt_long (argc, argv, "hlpvx", options, NULL)) != -1)
     {
       switch (opt)
 	{
@@ -109,11 +113,21 @@ main (int argc ATTRIBUTE_UNUSED, char **argv)
 	case 'p':
 	  flag_dump_positions = 1;
 	  break;
+	case 'x':
+	  flag_dump_aux_modules_only = 1;
+	  break;
 	default:
 	  fprintf (stderr, "unknown flag `%c'\n", opt);
 	}
     }
 
+  if (flag_dump_aux_modules_only)
+    {
+      while (argv[optind])
+	if (dump_aux_modules (argv[optind++]))
+	  return 1;
+    }
+  else
   while (argv[optind])
     dump_gcov_file (argv[optind++]);
   return 0;
@@ -128,6 +142,7 @@ print_usage (void)
   printf ("  -v, --version        Print version number\n");
   printf ("  -l, --long           Dump record contents too\n");
   printf ("  -p, --positions      Dump record positions\n");
+  printf ("  -x                   Dump names of auxiliary modules only\n");
 }
 
 static void
@@ -149,6 +164,52 @@ print_prefix (const char *filename, unsigned depth, gcov_position_t position)
   if (flag_dump_positions)
     printf ("%lu:", (unsigned long) position);
   printf ("%.*s", (int) depth, prefix);
+}
+
+/* Dump auxiliary module information for gcda file with
+   name FILENAME.  */
+
+static int
+dump_aux_modules (const char *filename)
+{
+  if (!gcov_open (filename, 1))
+    {
+      fprintf (stderr, "%s:cannot open\n", filename);
+      return 1;
+    }
+
+  /* magic */
+  gcov_read_unsigned ();
+  /* version */
+  gcov_read_unsigned ();
+  /* stamp */
+  gcov_read_unsigned ();
+
+  while (1)
+    {
+      gcov_position_t base;
+      unsigned tag, length;
+      int error;
+
+      tag = gcov_read_unsigned ();
+      if (!tag)
+	break;
+      length = gcov_read_unsigned ();
+      base = gcov_position ();
+      if (tag == GCOV_TAG_MODULE_INFO)
+	tag_module_info (filename, tag, length);
+      gcov_sync (base, length);
+      if ((error = gcov_is_error ()))
+	{
+	  printf (error < 0 ? "%s:counter overflow at %lu\n" :
+		  "%s:read error at %lu\n", filename,
+		  (long unsigned) gcov_position ());
+	  return 1;
+	}
+    }
+
+  gcov_close ();
+  return 0;
 }
 
 static void
@@ -484,5 +545,40 @@ tag_summary (const char *filename ATTRIBUTE_UNUSED,
               (HOST_WIDEST_INT)histo_bucket->min_value,
               (HOST_WIDEST_INT)histo_bucket->cum_value);
         }
+    }
+}
+
+static void
+tag_module_info (const char *filename ATTRIBUTE_UNUSED,
+		 unsigned tag ATTRIBUTE_UNUSED, unsigned length)
+{
+  struct gcov_module_info* mod_info;
+
+  mod_info = (struct gcov_module_info *) 
+      alloca ((length + 2) * sizeof (gcov_unsigned_t));
+  gcov_read_module_info (mod_info, length);
+  if (flag_dump_aux_modules_only)
+    {
+      if (!mod_info->is_primary)
+	printf ("%s\n", mod_info->source_filename);
+    }
+  else
+    {
+      const char *primary_suffix =
+               mod_info->is_primary ? "primary" : "auxiliary";
+      const char *export_suffix = "";
+      const char *include_all_suffix = "";
+
+      if (mod_info->is_primary)
+        {
+          if (MODULE_EXPORTED_FLAG (mod_info))
+            export_suffix = ",exported";
+          if (MODULE_INCLUDE_ALL_AUX_FLAG (mod_info))
+            include_all_suffix =",include_all";
+        }
+
+      printf (": %s (ident=%u) [%s%s%s]", mod_info->source_filename,
+              mod_info->ident, primary_suffix, export_suffix,
+              include_all_suffix);
     }
 }

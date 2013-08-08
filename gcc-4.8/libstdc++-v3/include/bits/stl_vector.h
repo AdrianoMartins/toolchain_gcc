@@ -158,7 +158,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 
       ~_Vector_base()
       { _M_deallocate(this->_M_impl._M_start, this->_M_impl._M_end_of_storage
-		      - this->_M_impl._M_start); }
+		      - this->_M_impl._M_start);
+#if __google_stl_debug_dangling_vector
+        this->_M_impl._M_start = 0;
+        this->_M_impl._M_finish = reinterpret_cast<_Tp*>(~0UL);
+#endif
+      }
 
     public:
       _Vector_impl _M_impl;
@@ -238,6 +243,31 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       using _Base::_M_deallocate;
       using _Base::_M_impl;
       using _Base::_M_get_Tp_allocator;
+
+      bool _M_is_valid() const
+      {
+        if (this->_M_impl._M_end_of_storage == 0
+	    && this->_M_impl._M_start == 0
+	    && this->_M_impl._M_finish == 0)
+	  return true;
+
+	if (this->_M_impl._M_start <= this->_M_impl._M_finish
+	    && this->_M_impl._M_finish <= this->_M_impl._M_end_of_storage)
+	  {
+	    if (this->_M_impl._M_start < this->_M_impl._M_end_of_storage)
+	      return true;
+	    else if (this->_M_impl._M_start == this->_M_impl._M_end_of_storage
+		     && this->_M_impl._M_start == this->_M_impl._M_finish)
+	      {
+		pointer _0xcdcd;
+
+		__builtin_memset(&_0xcdcd, 0xcd, sizeof(_0xcdcd));
+		return this->_M_impl._M_finish != _0xcdcd;
+	      }
+	  }
+
+	return false;
+      }
 
     public:
       // [23.2.4.1] construct/copy/destroy
@@ -536,7 +566,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       iterator
       begin() _GLIBCXX_NOEXCEPT
-      { return iterator(this->_M_impl._M_start); }
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("begin() on corrupt (dangling?) vector");
+#endif
+	return iterator(this->_M_impl._M_start);
+      }
 
       /**
        *  Returns a read-only (constant) iterator that points to the
@@ -545,7 +581,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       const_iterator
       begin() const _GLIBCXX_NOEXCEPT
-      { return const_iterator(this->_M_impl._M_start); }
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("begin() on corrupt (dangling?) vector");
+#endif
+	return const_iterator(this->_M_impl._M_start);
+      }
 
       /**
        *  Returns a read/write iterator that points one past the last
@@ -554,7 +596,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       iterator
       end() _GLIBCXX_NOEXCEPT
-      { return iterator(this->_M_impl._M_finish); }
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("end() on corrupt (dangling?) vector");
+#endif
+	return iterator(this->_M_impl._M_finish);
+      }
 
       /**
        *  Returns a read-only (constant) iterator that points one past
@@ -563,7 +611,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       const_iterator
       end() const _GLIBCXX_NOEXCEPT
-      { return const_iterator(this->_M_impl._M_finish); }
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("end() on corrupt (dangling?) vector");
+#endif
+	return const_iterator(this->_M_impl._M_finish);
+      }
 
       /**
        *  Returns a read/write reverse iterator that points to the
@@ -643,7 +697,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       /**  Returns the number of elements in the %vector.  */
       size_type
       size() const _GLIBCXX_NOEXCEPT
-      { return size_type(this->_M_impl._M_finish - this->_M_impl._M_start); }
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("size() on corrupt (dangling?) vector");
+#endif
+	return size_type(this->_M_impl._M_finish - this->_M_impl._M_start);
+      }
 
       /**  Returns the size() of the largest possible %vector.  */
       size_type
@@ -723,7 +783,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       size_type
       capacity() const _GLIBCXX_NOEXCEPT
-      { return size_type(this->_M_impl._M_end_of_storage
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("capacity() on corrupt (dangling?) vector");
+#endif
+	return size_type(this->_M_impl._M_end_of_storage
 			 - this->_M_impl._M_start); }
 
       /**
@@ -765,10 +830,18 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        *  Note that data access with this operator is unchecked and
        *  out_of_range lookups are not defined. (For checked lookups
        *  see at().)
+       *
+       *  Local modification: range checks are performed if
+       *  __google_stl_debug_vector is defined to non-zero.
        */
       reference
       operator[](size_type __n)
-      { return *(this->_M_impl._M_start + __n); }
+      {
+#if __google_stl_debug_vector
+	_M_range_check(__n);
+#endif
+	return *(this->_M_impl._M_start + __n);
+      }
 
       /**
        *  @brief  Subscript access to the data contained in the %vector.
@@ -780,10 +853,18 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        *  Note that data access with this operator is unchecked and
        *  out_of_range lookups are not defined. (For checked lookups
        *  see at().)
+       *
+       *  Local modification: range checks are performed if
+       *  __google_stl_debug_vector is defined to non-zero.
        */
       const_reference
       operator[](size_type __n) const
-      { return *(this->_M_impl._M_start + __n); }
+      {
+#if __google_stl_debug_vector
+	_M_range_check(__n);
+#endif
+	return *(this->_M_impl._M_start + __n);
+      }
 
     protected:
       /// Safety check used only from at().
@@ -837,7 +918,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       reference
       front()
-      { return *begin(); }
+      {
+#if __google_stl_debug_vector
+        if (empty()) __throw_logic_error("front() on empty vector");
+#endif
+        return *begin();
+      }
 
       /**
        *  Returns a read-only (constant) reference to the data at the first
@@ -845,7 +931,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       const_reference
       front() const
-      { return *begin(); }
+      {
+#if __google_stl_debug_vector
+        if (empty()) __throw_logic_error("front() on empty vector");
+#endif
+        return *begin();
+      }
 
       /**
        *  Returns a read/write reference to the data at the last
@@ -853,7 +944,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       reference
       back()
-      { return *(end() - 1); }
+      {
+#if __google_stl_debug_vector
+        if (empty()) __throw_logic_error("back() on empty vector");
+#endif
+        return *(end() - 1);
+      }
       
       /**
        *  Returns a read-only (constant) reference to the data at the
@@ -861,7 +957,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       const_reference
       back() const
-      { return *(end() - 1); }
+      {
+#if __google_stl_debug_vector
+        if (empty()) __throw_logic_error("back() on empty vector");
+#endif
+        return *(end() - 1);
+      }
 
       // _GLIBCXX_RESOLVE_LIB_DEFECTS
       // DR 464. Suggestion for new member functions in standard containers.
@@ -876,7 +977,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       pointer
 #endif
       data() _GLIBCXX_NOEXCEPT
-      { return std::__addressof(front()); }
+      {
+#if __google_stl_debug_vector
+        if (empty()) return 0;
+#endif
+        return std::__addressof(front());
+      }
 
 #if __cplusplus >= 201103L
       const _Tp*
@@ -884,7 +990,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
       const_pointer
 #endif
       data() const _GLIBCXX_NOEXCEPT
-      { return std::__addressof(front()); }
+      {
+#if __google_stl_debug_vector
+        if (empty()) return 0;
+#endif
+        return std::__addressof(front());
+      }
 
       // [23.2.4.3] modifiers
       /**
@@ -1110,6 +1221,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
 			noexcept(_Alloc_traits::_S_nothrow_swap())
 #endif
       {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid() || !__x._M_is_valid())
+          __throw_logic_error("swap() on corrupt (dangling?) vector");
+#endif
 	this->_M_impl._M_swap_data(__x._M_impl);
 	_Alloc_traits::_S_on_swap(_M_get_Tp_allocator(),
 	                          __x._M_get_Tp_allocator());
@@ -1123,7 +1238,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
        */
       void
       clear() _GLIBCXX_NOEXCEPT
-      { _M_erase_at_end(this->_M_impl._M_start); }
+      {
+#if __google_stl_debug_dangling_vector
+        if (!this->_M_is_valid())
+          __throw_logic_error("clear() on corrupt (dangling?) vector");
+#endif
+	_M_erase_at_end(this->_M_impl._M_start);
+      }
 
     protected:
       /**

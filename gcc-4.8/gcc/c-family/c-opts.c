@@ -42,6 +42,10 @@ along with GCC; see the file COPYING3.  If not see
 				   TARGET_FLT_EVAL_METHOD_NON_DEFAULT and
 				   TARGET_OPTF.  */
 #include "tm_p.h"		/* For C_COMMON_OVERRIDE_OPTIONS.  */
+#include "function.h"
+#include "params.h"
+#include "l-ipo.h"
+#include "dumpfile.h"
 
 #ifndef DOLLARS_IN_IDENTIFIERS
 # define DOLLARS_IN_IDENTIFIERS true
@@ -100,6 +104,8 @@ static size_t deferred_count;
 
 /* Number of deferred options scanned for -include.  */
 static size_t include_cursor;
+
+static bool parsing_done_p = false;
 
 /* Whether any standard preincluded header has been preincluded.  */
 static bool done_preinclude;
@@ -834,6 +840,10 @@ c_common_post_options (const char **pfilename)
   else if (!flag_gnu89_inline && !flag_isoc99)
     error ("-fno-gnu89-inline is only supported in GNU99 or C99 mode");
 
+  if (flag_dyn_ipa && cpp_opts->preprocessed)
+    error ("-fpreprocessed/-save-temps are not supported with -fripa");
+
+
   /* Default to ObjC sjlj exception handling if NeXT runtime.  */
   if (flag_objc_sjlj_exceptions < 0)
     flag_objc_sjlj_exceptions = flag_next_runtime;
@@ -866,6 +876,12 @@ c_common_post_options (const char **pfilename)
      we need to selectively turn it on here.  */
   if (warn_packed_bitfield_compat == -1)
     warn_packed_bitfield_compat = 1;
+
+  /* Enable warning for converting real values to integral values
+     when -Wconversion is specified (unless disabled through
+     -Wno-real-conversion).  */
+  if (warn_real_conversion == -1)
+    warn_real_conversion = warn_conversion;
 
   /* Special format checking options don't work without -Wformat; warn if
      they are used.  */
@@ -1030,6 +1046,34 @@ c_common_init (void)
   return true;
 }
 
+/* Return TRUE if the lipo maximum memory consumption limit is reached, and
+   we should not import any further auxiliary modules. Check after parsing
+   each module, the Ith module being the just parsed module.  */
+static bool
+lipo_max_mem_reached (unsigned int i)
+{
+  if (L_IPO_COMP_MODE && PARAM_VALUE (PARAM_MAX_LIPO_MEMORY)
+      && i < (num_in_fnames - 1)
+      /* Scale up memory usage by 25% to account for memory consumption
+         by the optimizer.  */
+      && ((ggc_total_allocated () >> 10) * 1.25
+          > (size_t) PARAM_VALUE (PARAM_MAX_LIPO_MEMORY))) {
+    if (dump_enabled_p ())
+      {
+        i++;
+        do {
+          dump_printf_loc (MSG_OPTIMIZED_LOCATIONS, input_location,
+                           "Not importing %s: maximum memory "
+                           "consumption reached", in_fnames[i]);
+          i++;
+        } while (i < num_in_fnames);
+      }
+    return true;
+  }
+  return false;
+}
+
+
 /* Initialize the integrated preprocessor after debug output has been
    initialized; loop over each input file.  */
 void
@@ -1042,8 +1086,22 @@ c_common_parse_file (void)
     {
       c_finish_options ();
       pch_init ();
+      set_lipo_c_parsing_context (parse_in, i, verbose);
       push_file_scope ();
+
       c_parse_file ();
+      if (i == 0 && flag_record_compilation_info_in_elf)
+        write_compilation_flags_to_asm ();
+
+      if (i == 0)
+	ggc_total_memory = (ggc_total_allocated () >> 10);
+
+      /* In lipo mode, processing too many auxiliary files will cause us
+	 to hit memory limits, and cause thrashing -- prevent this by not
+	 processing any further auxiliary modules if we reach a certain
+	 memory limit.  */
+      if (!include_all_aux && lipo_max_mem_reached (i))
+	num_in_fnames = i + 1;
       pop_file_scope ();
       /* And end the main input file, if the debug writer wants it  */
       if (debug_hooks->start_end_main_source_file)
@@ -1052,6 +1110,7 @@ c_common_parse_file (void)
 	break;
       cpp_undef_all (parse_in);
       cpp_clear_file_cache (parse_in);
+      deferred_count = 0;
       this_input_filename
 	= cpp_read_main_file (parse_in, in_fnames[i]);
       /* If an input file is missing, abandon further compilation.
@@ -1059,6 +1118,15 @@ c_common_parse_file (void)
       if (!this_input_filename)
 	break;
     }
+    parsing_done_p = true;
+}
+
+/* Returns true if parsing is done  */
+
+bool
+is_parsing_done_p (void)
+{
+  return parsing_done_p;
 }
 
 /* Common finish hook for the C, ObjC and C++ front ends.  */
@@ -1068,7 +1136,11 @@ c_common_finish (void)
   FILE *deps_stream = NULL;
 
   /* Don't write the deps file if there are errors.  */
-  if (cpp_opts->deps.style != DEPS_NONE && !seen_error ())
+  /* FIXME.  We are emitting the deps file even if there were errors.
+     This is a temporary workaround to avoid confusing Google's build
+     system.  It assumes that deps files are always emitted even
+     in the presence of errors.  */
+  if (cpp_opts->deps.style != DEPS_NONE /*&& !seen_error ()*/)
     {
       /* If -M or -MM was seen without -MF, default output to the
 	 output stream.  */
@@ -1290,9 +1362,15 @@ c_finish_options (void)
 	  struct deferred_opt *opt = &deferred_opts[i];
 
 	  if (opt->code == OPT_D)
-	    cpp_define (parse_in, opt->arg);
+	    {
+	      cpp_define (parse_in, opt->arg);
+	      coverage_note_define (opt->arg, true);
+	    }
 	  else if (opt->code == OPT_U)
-	    cpp_undef (parse_in, opt->arg);
+	    {
+	      cpp_undef (parse_in, opt->arg);
+	      coverage_note_define (opt->arg, false);
+	    }
 	  else if (opt->code == OPT_A)
 	    {
 	      if (opt->arg[0] == '-')
@@ -1315,6 +1393,7 @@ c_finish_options (void)
 	  if (opt->code == OPT_imacros
 	      && cpp_push_include (parse_in, opt->arg))
 	    {
+	      coverage_note_include (opt->arg);
 	      /* Disable push_command_line_include callback for now.  */
 	      include_cursor = deferred_count + 1;
 	      cpp_scan_nooutput (parse_in);
@@ -1359,7 +1438,10 @@ push_command_line_include (void)
 
       if (!cpp_opts->preprocessed && opt->code == OPT_include
 	  && cpp_push_include (parse_in, opt->arg))
-	return;
+	{
+	  coverage_note_include (opt->arg);
+	  return;
+	}
     }
 
   if (include_cursor == deferred_count)

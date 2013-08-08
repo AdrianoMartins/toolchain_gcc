@@ -38,6 +38,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "data-streamer.h"
 #include "tree-streamer.h"
 #include "params.h"
+#include "l-ipo.h"
 
 /* Intermediate information about a parameter that is only useful during the
    run of ipa_analyze_node and is not kept afterwards.  */
@@ -1393,7 +1394,20 @@ ipa_compute_jump_functions_for_edge (struct param_analysis_info *parms_ainfo,
       tree arg = gimple_call_arg (call, n);
 
       if (is_gimple_ip_invariant (arg))
-	ipa_set_jf_constant (jfunc, arg);
+        {
+          if (L_IPO_COMP_MODE && TREE_CODE (arg) == ADDR_EXPR
+              && TREE_CODE (TREE_OPERAND (arg, 0)) == FUNCTION_DECL)
+            {
+              tree fdecl = TREE_OPERAND (arg, 0);
+	      fdecl = cgraph_lipo_get_resolved_node (fdecl)->symbol.decl;
+              if (fdecl != TREE_OPERAND (arg, 0))
+                {
+                  arg = unshare_expr (arg);
+                  TREE_OPERAND (arg, 0) = fdecl;
+                }
+            }
+          ipa_set_jf_constant (jfunc, arg);
+        }
       else if (!is_gimple_reg_type (TREE_TYPE (arg))
 	       && TREE_CODE (arg) == PARM_DECL)
 	{
@@ -2120,7 +2134,6 @@ ipa_make_edge_direct_to_target (struct cgraph_edge *ie, tree target)
      we may create the first reference to the object in the unit.  */
   if (!callee || callee->global.inlined_to)
     {
-      struct cgraph_node *first_clone = callee;
 
       /* We are better to ensure we can refer to it.
 	 In the case of static functions we are out of luck, since we already	
@@ -2136,31 +2149,7 @@ ipa_make_edge_direct_to_target (struct cgraph_edge *ie, tree target)
 		     xstrdup (cgraph_node_name (ie->callee)), ie->callee->uid);
 	  return NULL;
 	}
-
-      /* Create symbol table node.  Even if inline clone exists, we can not take
-	 it as a target of non-inlined call.  */
-      callee = cgraph_create_node (target);
-
-      /* OK, we previously inlined the function, then removed the offline copy and
-	 now we want it back for external call.  This can happen when devirtualizing
-	 while inlining function called once that happens after extern inlined and
-	 virtuals are already removed.  In this case introduce the external node
-	 and make it available for call.  */
-      if (first_clone)
-	{
-	  first_clone->clone_of = callee;
-	  callee->clones = first_clone;
-	  symtab_prevail_in_asm_name_hash ((symtab_node)callee);
-	  symtab_insert_node_to_hashtable ((symtab_node)callee);
-	  if (dump_file)
-	    fprintf (dump_file, "ipa-prop: Introduced new external node "
-		     "(%s/%i) and turned into root of the clone tree.\n",
-		     xstrdup (cgraph_node_name (callee)), callee->uid);
-	}
-      else if (dump_file)
-	fprintf (dump_file, "ipa-prop: Introduced new external node "
-		 "(%s/%i).\n",
-		 xstrdup (cgraph_node_name (callee)), callee->uid);
+      callee = cgraph_get_create_real_symbol_node (target);
     }
   ipa_check_create_node_params ();
 
@@ -2335,8 +2324,9 @@ update_indirect_edges_after_inlining (struct cgraph_edge *cs,
 	  new_direct_edge->indirect_inlining_edge = 1;
 	  if (new_direct_edge->call_stmt)
 	    new_direct_edge->call_stmt_cannot_inline_p
-	      = !gimple_check_call_matching_types (new_direct_edge->call_stmt,
-						   new_direct_edge->callee->symbol.decl);
+	      = !gimple_check_call_matching_types (
+		  new_direct_edge->call_stmt,
+		  new_direct_edge->callee->symbol.decl, false);
 	  if (new_edges)
 	    {
 	      new_edges->safe_push (new_direct_edge);

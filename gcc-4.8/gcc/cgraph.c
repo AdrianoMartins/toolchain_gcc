@@ -49,9 +49,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "rtl.h"
 #include "ipa-utils.h"
 #include "lto-streamer.h"
+#include "l-ipo.h"
 #include "ipa-inline.h"
 #include "cfgloop.h"
 #include "gimple-pretty-print.h"
+#include "opts.h"
 
 /* FIXME: Only for PROP_loops, but cgraph shouldn't have to know about this.  */
 #include "tree-pass.h"
@@ -534,6 +536,7 @@ cgraph_create_node (tree decl)
       node->next_nested = node->origin->nested;
       node->origin->nested = node;
     }
+  pattern_match_function_attributes (decl);
   return node;
 }
 
@@ -720,7 +723,9 @@ cgraph_edge (struct cgraph_node *node, gimple call_stmt)
     {
       node->call_site_hash = htab_create_ggc (120, edge_hash, edge_eq, NULL);
       for (e2 = node->callees; e2; e2 = e2->next_callee)
-	cgraph_add_edge_to_call_site_hash (e2);
+	/* Skip fake edges.  */
+	if (e2->call_stmt)
+	  cgraph_add_edge_to_call_site_hash (e2);
       for (e2 = node->indirect_calls; e2; e2 = e2->next_callee)
 	cgraph_add_edge_to_call_site_hash (e2);
     }
@@ -750,6 +755,8 @@ cgraph_set_call_stmt (struct cgraph_edge *e, gimple new_stmt)
       /* Constant propagation (and possibly also inlining?) can turn an
 	 indirect call into a direct one.  */
       struct cgraph_node *new_callee = cgraph_get_node (decl);
+      if (L_IPO_COMP_MODE && cgraph_pre_profiling_inlining_done)
+        new_callee = cgraph_lipo_get_resolved_node (decl);
 
       gcc_checking_assert (new_callee);
       cgraph_make_edge_direct (e, new_callee);
@@ -815,7 +822,8 @@ cgraph_create_edge_1 (struct cgraph_node *caller, struct cgraph_node *callee,
   pop_cfun ();
   if (call_stmt
       && callee && callee->symbol.decl
-      && !gimple_check_call_matching_types (call_stmt, callee->symbol.decl))
+      && !gimple_check_call_matching_types (call_stmt, callee->symbol.decl,
+					    false))
     edge->call_stmt_cannot_inline_p = true;
   else
     edge->call_stmt_cannot_inline_p = false;
@@ -920,7 +928,7 @@ cgraph_edge_remove_caller (struct cgraph_edge *e)
       else
 	e->caller->callees = e->next_callee;
     }
-  if (e->caller->call_site_hash)
+  if (e->caller->call_site_hash && e->call_stmt)
     htab_remove_elt_with_hash (e->caller->call_site_hash,
 			       e->call_stmt,
 	  		       htab_hash_pointer (e->call_stmt));
@@ -958,6 +966,26 @@ cgraph_remove_edge (struct cgraph_edge *e)
   /* Put the edge onto the free list.  */
   cgraph_free_edge (e);
 }
+
+/* Remove fake cgraph edges for indirect calls. NODE is the callee
+   of the edges.  */
+
+void
+cgraph_remove_fake_indirect_call_in_edges (struct cgraph_node *node)
+{
+  struct cgraph_edge *f, *e;
+
+  if (!L_IPO_COMP_MODE)
+    return;
+
+  for (e = node->callers; e; e = f)
+    {
+      f = e->next_caller;
+      if (!e->call_stmt)
+        cgraph_remove_edge (e);
+    }
+}
+
 
 /* Set callee of call graph edge E and add it to the corresponding set of
    callers. */
@@ -1015,7 +1043,8 @@ cgraph_make_edge_direct (struct cgraph_edge *edge, struct cgraph_node *callee)
 
   if (edge->call_stmt)
     edge->call_stmt_cannot_inline_p
-      = !gimple_check_call_matching_types (edge->call_stmt, callee->symbol.decl);
+      = !gimple_check_call_matching_types (edge->call_stmt, callee->symbol.decl,
+					   false);
 
   /* We need to re-determine the inlining status of the edge.  */
   initialize_inline_failed (edge);
@@ -1092,6 +1121,12 @@ cgraph_redirect_edge_call_stmt_to_callee (struct cgraph_edge *e)
       new_stmt = e->call_stmt;
       gimple_call_set_fndecl (new_stmt, e->callee->symbol.decl);
       update_stmt (new_stmt);
+      if (L_IPO_COMP_MODE)
+        {
+          int lp_nr = lookup_stmt_eh_lp (e->call_stmt);
+          if (lp_nr != 0 && !stmt_could_throw_p (e->call_stmt))
+            remove_stmt_from_eh_lp (e->call_stmt);
+        }
     }
 
   cgraph_set_call_stmt_including_clones (e->caller, e->call_stmt, new_stmt);
@@ -1266,6 +1301,8 @@ cgraph_node_remove_callers (struct cgraph_node *node)
 void
 cgraph_release_function_body (struct cgraph_node *node)
 {
+  if (cgraph_is_aux_decl_external (node))
+    DECL_EXTERNAL (node->symbol.decl) = 1;
   if (DECL_STRUCT_FUNCTION (node->symbol.decl))
     {
       push_cfun (DECL_STRUCT_FUNCTION (node->symbol.decl));
@@ -1374,6 +1411,7 @@ cgraph_remove_node (struct cgraph_node *node)
      itself is kept in the cgraph even after it is compiled.  Check whether
      we are done with this body and reclaim it proactively if this is the case.
      */
+  bool kill_body = false;
   n = cgraph_get_node (node->symbol.decl);
   if (!n
       || (!n->clones && !n->clone_of && !n->global.inlined_to
@@ -1382,9 +1420,13 @@ cgraph_remove_node (struct cgraph_node *node)
 		  || DECL_EXTERNAL (n->symbol.decl)
 		  || !n->analyzed
 		  || n->symbol.in_other_partition))))
+	kill_body = true;
+
+  if (kill_body)
     cgraph_release_function_body (node);
 
-  node->symbol.decl = NULL;
+  cgraph_remove_link_node (node);
+
   if (node->call_site_hash)
     {
       htab_delete (node->call_site_hash);
@@ -1400,6 +1442,7 @@ cgraph_remove_node (struct cgraph_node *node)
   SET_NEXT_FREE_NODE (node, free_nodes);
   free_nodes = node;
 }
+
 
 /* Likewise indicate that a node is having address taken.  */
 
@@ -1515,6 +1558,9 @@ dump_cgraph_node (FILE *f, struct cgraph_node *node)
   if (node->count)
     fprintf (f, " executed "HOST_WIDEST_INT_PRINT_DEC"x",
 	     (HOST_WIDEST_INT)node->count);
+  if (node->max_bb_count)
+    fprintf (f, " hottest bb executed "HOST_WIDEST_INT_PRINT_DEC"x",
+	     (HOST_WIDEST_INT)node->max_bb_count);
   if (node->origin)
     fprintf (f, " nested in: %s", cgraph_node_asm_name (node->origin));
   if (gimple_has_body_p (node->symbol.decl))
@@ -2223,6 +2269,7 @@ verify_edge_count_and_frequency (struct cgraph_edge *e)
       error_found = true;
     }
   if (gimple_has_body_p (e->caller->symbol.decl)
+      && e->call_stmt
       && !e->caller->global.inlined_to
       /* FIXME: Inline-analysis sets frequency to 0 when edge is optimized out.
 	 Remove this once edges are actually removed from the function at that time.  */
@@ -2460,7 +2507,9 @@ verify_cgraph_node (struct cgraph_node *node)
 	    error ("Alias has non-alias reference");
 	    error_found = true;
 	  }
-	else if (ref_found)
+	else if (ref_found
+                 /* in LIPO mode, the alias can refer to the real target also  */
+                 && !L_IPO_COMP_MODE)
 	  {
 	    error ("Alias has more than one alias reference");
 	    error_found = true;
@@ -2554,7 +2603,7 @@ verify_cgraph_node (struct cgraph_node *node)
 
       for (e = node->callees; e; e = e->next_callee)
 	{
-	  if (!e->aux)
+	  if (!e->aux && e->call_stmt)
 	    {
 	      error ("edge %s->%s has no corresponding call_stmt",
 		     identifier_to_locale (cgraph_node_name (e->caller)),
@@ -2595,5 +2644,48 @@ verify_cgraph (void)
 
   FOR_EACH_FUNCTION (node)
     verify_cgraph_node (node);
+}
+
+/* Create external decl node for DECL.
+   The difference i nbetween cgraph_get_create_node and
+   cgraph_get_create_real_symbol_node is that cgraph_get_create_node
+   may return inline clone, while cgraph_get_create_real_symbol_node
+   will create a new node in this case.
+   FIXME: This function should be removed once clones are put out of decl
+   hash.  */
+
+struct cgraph_node *
+cgraph_get_create_real_symbol_node (tree decl)
+{
+  struct cgraph_node *first_clone = cgraph_get_node (decl);
+  struct cgraph_node *node;
+  /* create symbol table node.  even if inline clone exists, we can not take
+     it as a target of non-inlined call.  */
+  node = cgraph_get_node (decl);
+  if (node && !node->global.inlined_to)
+    return node;
+
+  node = cgraph_create_node (decl);
+
+  /* ok, we previously inlined the function, then removed the offline copy and
+     now we want it back for external call.  this can happen when devirtualizing
+     while inlining function called once that happens after extern inlined and
+     virtuals are already removed.  in this case introduce the external node
+     and make it available for call.  */
+  if (first_clone)
+    {
+      first_clone->clone_of = node;
+      node->clones = first_clone;
+      symtab_prevail_in_asm_name_hash ((symtab_node) node);
+      symtab_insert_node_to_hashtable ((symtab_node) node);
+      if (dump_file)
+	fprintf (dump_file, "Introduced new external node "
+		 "(%s/%i) and turned into root of the clone tree.\n",
+		 xstrdup (cgraph_node_name (node)), node->uid);
+    }
+  else if (dump_file)
+    fprintf (dump_file, "Introduced new external node "
+	     "(%s/%i).\n", xstrdup (cgraph_node_name (node)), node->uid);
+  return node;
 }
 #include "gt-cgraph.h"

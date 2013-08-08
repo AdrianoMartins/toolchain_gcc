@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-O2 -fdump-tree-optimized -fdisable-tree-einline -fdisable-ipa-inline -Wno-attributes" } */
+/* { dg-options "-O2 -fdump-tree-optimized -fdisable-tree-einline -fdisable-ipa-inline" } */
 int g;
 __attribute__((always_inline)) void bar (void)
 {
@@ -20,3 +20,4 @@ int foo2 (void)
 
 /* { dg-final { scan-tree-dump-times "bar" 5 "optimized" } } */
 /* { dg-final { cleanup-tree-dump "optimized" } } */
+/* { dg-excess-errors "extra notes" } */

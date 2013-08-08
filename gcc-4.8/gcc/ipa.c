@@ -22,6 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "tm.h"
 #include "cgraph.h"
+#include "toplev.h"
 #include "tree-pass.h"
 #include "gimple.h"
 #include "ggc.h"
@@ -29,6 +30,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "pointer-set.h"
 #include "target.h"
 #include "tree-iterator.h"
+#include "l-ipo.h"
 #include "ipa-utils.h"
 #include "pointer-set.h"
 #include "ipa-inline.h"
@@ -88,7 +90,8 @@ process_references (struct ipa_ref_list *list,
 	  struct cgraph_node *node = ipa_ref_node (ref);
 
 	  if (node->analyzed
-	      && (!DECL_EXTERNAL (node->symbol.decl)
+	      && (!(DECL_EXTERNAL (node->symbol.decl)
+	            || cgraph_is_aux_decl_external (node))
 		  || node->alias
 	          || before_inlining_p))
 	    pointer_set_insert (reachable, node);
@@ -221,6 +224,14 @@ symtab_remove_unreachable_nodes (bool before_inlining_p, FILE *file)
   struct pointer_set_t *reachable = pointer_set_create ();
   struct pointer_set_t *body_needed_for_clonning = pointer_set_create ();
 
+  /* In LIPO mode, do not remove functions until after global linking
+     is performed. Otherwise functions needed for cross module inlining
+     may get eliminated. Global linking will be done just before tree
+     profiling.  */
+  if (L_IPO_COMP_MODE
+     && !cgraph_pre_profiling_inlining_done)
+    return false;
+
 #ifdef ENABLE_CHECKING
   verify_symtab ();
 #endif
@@ -299,7 +310,8 @@ symtab_remove_unreachable_nodes (bool before_inlining_p, FILE *file)
 		{
 		  if (e->callee->analyzed
 		      && (!e->inline_failed
-			  || !DECL_EXTERNAL (e->callee->symbol.decl)
+			  || !(DECL_EXTERNAL (e->callee->symbol.decl)
+			       || cgraph_is_aux_decl_external (e->callee))
 			  || cnode->alias
 			  || before_inlining_p))
 		    pointer_set_insert (reachable, e->callee);
@@ -359,8 +371,14 @@ symtab_remove_unreachable_nodes (bool before_inlining_p, FILE *file)
 	    {
 	      if (file)
 		fprintf (file, " %s", cgraph_node_name (node));
-	      cgraph_node_remove_callees (node);
-	      ipa_remove_all_references (&node->symbol.ref_list);
+#ifdef FIXME_LIPO
+error " Check the following code "
+#endif
+              if (!cgraph_is_aux_decl_external (node))
+                {
+	          cgraph_node_remove_callees (node);
+	          ipa_remove_all_references (&node->symbol.ref_list);
+                }
 	      changed = true;
 	    }
 	  if (!pointer_set_contains (body_needed_for_clonning, node->symbol.decl)
@@ -378,6 +396,20 @@ symtab_remove_unreachable_nodes (bool before_inlining_p, FILE *file)
       if (node->global.inlined_to
 	  && !node->callers)
 	{
+          /* Clean up dangling references from callees as well.
+             TODO -- should be done recursively.  */
+          if (L_IPO_COMP_MODE)
+            {
+	      struct cgraph_edge *e;
+              for (e = node->callees; e; e = e->next_callee)
+                {
+                  struct cgraph_node *callee_node;
+
+                  callee_node = e->callee;
+                  if (callee_node->global.inlined_to)
+                    callee_node->global.inlined_to = node;
+                }
+            }
 	  gcc_assert (node->clones);
 	  node->global.inlined_to = NULL;
 	  update_inlined_to_pointer (node, node);
@@ -387,30 +419,33 @@ symtab_remove_unreachable_nodes (bool before_inlining_p, FILE *file)
 
   /* Remove unreachable variables.  */
   if (file)
-    fprintf (file, "\nReclaiming variables:");
+    fprintf (file, "\n");
+
+  if (file)
+    fprintf (file, "Reclaiming variables:");
   for (vnode = varpool_first_variable (); vnode; vnode = vnext)
     {
       vnext = varpool_next_variable (vnode);
       if (!vnode->symbol.aux)
-	{
-	  if (file)
-	    fprintf (file, " %s", varpool_node_name (vnode));
-	  varpool_remove_node (vnode);
-	  changed = true;
-	}
+        {
+          if (file)
+            fprintf (file, " %s", varpool_node_name (vnode));
+          varpool_remove_node (vnode);
+          changed = true;
+        }
       else if (!pointer_set_contains (reachable, vnode))
         {
-	  if (vnode->analyzed)
-	    {
-	      if (file)
-		fprintf (file, " %s", varpool_node_name (vnode));
-	      changed = true;
-	    }
-	  vnode->analyzed = false;
-	  vnode->symbol.aux = NULL;
-	}
+          if (vnode->analyzed)
+            {
+              if (file)
+                fprintf (file, " %s", varpool_node_name (vnode));
+              changed = true;
+            }
+          vnode->analyzed = false;
+          vnode->symbol.aux = NULL;
+        }
       else
-	vnode->symbol.aux = NULL;
+        vnode->symbol.aux = NULL;
     }
 
   pointer_set_destroy (reachable);
@@ -892,6 +927,7 @@ function_and_variable_visibility (bool whole_program)
     {
       if (!vnode->finalized)
         continue;
+
       if (varpool_externally_visible_p
 	    (vnode, 
 	     pointer_set_contains (aliased_vnodes, vnode)))
@@ -906,6 +942,10 @@ function_and_variable_visibility (bool whole_program)
 	    symtab_dissolve_same_comdat_group_list ((symtab_node) vnode);
 	  vnode->symbol.resolution = LDPR_PREVAILING_DEF_IRONLY;
 	}
+      /* Static variables defined in auxiliary modules are externalized to
+         allow cross module inlining.  */
+      gcc_assert (TREE_STATIC (vnode->symbol.decl)
+                  || varpool_is_auxiliary (vnode));
     }
   pointer_set_destroy (aliased_nodes);
   pointer_set_destroy (aliased_vnodes);

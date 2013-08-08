@@ -21,6 +21,8 @@ extern void register_include_chains (cpp_reader *, const char *,
 				     const char *, const char *,
 				     int, int, int);
 extern void add_cpp_dir_path (struct cpp_dir *, int);
+extern void get_include_chains (cpp_dir **quotes, cpp_dir **brackets);
+extern void clear_include_chains (void);
 extern struct cpp_dir *get_added_cpp_dirs (int);
 
 struct target_c_incpath_s {

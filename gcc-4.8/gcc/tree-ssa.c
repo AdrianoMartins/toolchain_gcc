@@ -28,6 +28,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "ggc.h"
 #include "langhooks.h"
 #include "basic-block.h"
+#include "input.h"
 #include "function.h"
 #include "gimple-pretty-print.h"
 #include "bitmap.h"
@@ -38,6 +39,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "hashtab.h"
 #include "tree-pass.h"
 #include "diagnostic-core.h"
+#include "l-ipo.h"
 #include "cfgloop.h"
 
 /* Pointer map of variable mappings, keyed by edge.  */
@@ -1406,7 +1408,9 @@ useless_type_conversion_p (tree outer_type, tree inner_type)
      compared types.  */
   else if (AGGREGATE_TYPE_P (inner_type)
 	   && TREE_CODE (inner_type) == TREE_CODE (outer_type))
-    return false;
+    return (L_IPO_COMP_MODE
+	    && (equivalent_struct_types_for_tbaa (inner_type,
+						  outer_type) == 1));
 
   return false;
 }
@@ -1607,6 +1611,8 @@ warn_uninit (enum opt_code wc, tree t,
   location = (context != NULL && gimple_has_location (context))
 	     ? gimple_location (context)
 	     : DECL_SOURCE_LOCATION (var);
+  if (has_discriminator (location))
+    location = map_discriminator_location (location);
   location = linemap_resolve_location (line_table, location,
 				       LRK_SPELLING_LOCATION,
 				       NULL);

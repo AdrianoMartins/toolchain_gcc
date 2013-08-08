@@ -42,6 +42,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "pointer-set.h"
 #include "alloc-pool.h"
 #include "tree-ssa-alias.h"
+#include "dbgcnt.h"
+#include "l-ipo.h"
 
 /* Broad overview of how alias analysis on gimple works:
 
@@ -603,6 +605,9 @@ same_type_for_tbaa (tree type1, tree type2)
   if (get_alias_set (type1) == get_alias_set (type2))
     return -1;
 
+  if (L_IPO_COMP_MODE)
+    return equivalent_struct_types_for_tbaa (type1, type2);
+
   /* The types are known to be not equal.  */
   return 0;
 }
@@ -1022,6 +1027,9 @@ refs_may_alias_p_1 (ao_ref *ref1, ao_ref *ref2, bool tbaa_p)
 			   || handled_component_p (ref2->ref)
 			   || TREE_CODE (ref2->ref) == MEM_REF
 			   || TREE_CODE (ref2->ref) == TARGET_MEM_REF));
+
+  if (!dbg_cnt (alias))
+    return true;
 
   /* Decompose the references into their base objects and the access.  */
   base1 = ao_ref_base (ref1);
@@ -2243,4 +2251,3 @@ walk_aliased_vdefs (ao_ref *ref, tree vdef,
 
   return ret;
 }
-

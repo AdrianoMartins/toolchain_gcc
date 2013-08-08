@@ -67,6 +67,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "predict.h"
 #include "lto-streamer.h"
 #include "plugin.h"
+#include "l-ipo.h"
 #include "ipa-utils.h"
 #include "tree-pretty-print.h" /* for dump_function_header */
 
@@ -180,6 +181,13 @@ rest_of_decl_compilation (tree decl,
 				     top_level, at_end);
 	}
 #endif
+      if (L_IPO_COMP_MODE)
+        {
+          /* Create the node early during parsing so
+             that module id can be captured.  */
+          if (TREE_CODE (decl) == VAR_DECL)
+            varpool_node_for_decl (decl);
+        }
 
       timevar_pop (TV_VARCONST);
     }
@@ -296,6 +304,10 @@ struct simple_ipa_opt_pass pass_early_local_passes =
  }
 };
 
+/* Decides if the cgraph callee edges are being cleaned up for the
+   last time.  */
+bool cgraph_callee_edges_final_cleanup = false;
+
 /* Gate: execute, or not, all of the non-trivial optimizations.  */
 
 static bool
@@ -331,6 +343,8 @@ static struct gimple_opt_pass pass_all_early_optimizations =
 static bool
 gate_all_optimizations (void)
 {
+  /* The cgraph callee edges are being cleaned up for the last time.  */
+  cgraph_callee_edges_final_cleanup = true;
   return optimize >= 1 && !optimize_debug;
 }
 
@@ -525,6 +539,11 @@ register_one_dump_file (struct opt_pass *pass)
   flag_name = concat (prefix, name, num, NULL);
   glob_name = concat (prefix, name, NULL);
   optgroup_flags |= pass->optinfo_flags;
+  /* For any passes that do not have an optgroup set, and which are not
+     IPA passes setup above, set the optgroup to OPTGROUP_OTHER so that
+     any dump messages are emitted properly under -fopt-info(-optall).  */
+  if (optgroup_flags == OPTGROUP_NONE)
+    optgroup_flags = OPTGROUP_OTHER;
   id = dump_register (dot_name, flag_name, glob_name, flags, optgroup_flags);
   set_pass_for_id (id, pass);
   full_name = concat (prefix, pass->name, num, NULL);
@@ -712,7 +731,7 @@ dump_passes (void)
 
   create_pass_tab();
 
-  FOR_EACH_DEFINED_FUNCTION (n)
+  FOR_EACH_FUNCTION (n)
     if (DECL_STRUCT_FUNCTION (n->symbol.decl))
       {
 	node = n;
@@ -1348,6 +1367,7 @@ init_optimization_passes (void)
       NEXT_PASS (pass_inline_parameters);
     }
   NEXT_PASS (pass_ipa_free_inline_summary);
+  NEXT_PASS (pass_ipa_auto_profile);
   NEXT_PASS (pass_ipa_tree_profile);
     {
       struct opt_pass **p = &pass_ipa_tree_profile.pass.sub;
@@ -1383,6 +1403,7 @@ init_optimization_passes (void)
   /* These passes are run after IPA passes on every function that is being
      output to the assembler file.  */
   p = &all_passes;
+  NEXT_PASS (pass_direct_call_profile);
   NEXT_PASS (pass_fixup_cfg);
   NEXT_PASS (pass_lower_eh_dispatch);
   NEXT_PASS (pass_all_optimizations);

@@ -327,6 +327,10 @@ Wconversion-null
 C++ ObjC++ Var(warn_conversion_null) Init(1) Warning
 Warn for converting NULL from/to a non-pointer type
 
+Wself-assign-non-pod
+C++ ObjC++ Var(warn_self_assign_non_pod) Init(0) Warning
+Warn when a variable of a non-POD type is assigned to itself
+
 Wctor-dtor-privacy
 C++ ObjC++ Var(warn_ctor_dtor_privacy) Warning
 Warn when all constructors and destructors are private
@@ -672,6 +676,10 @@ Warn about signed-unsigned comparisons
 Wsign-compare
 C ObjC C++ ObjC++ EnabledBy(Wextra)
 ;
+
+Wreal-conversion
+C ObjC C++ ObjC++ Var(warn_real_conversion) Init(-1) Warning EnabledBy(Wconversion)
+Warn for implicit type conversions from real to integral values
 
 Wsign-conversion
 C ObjC C++ ObjC++ Var(warn_sign_conversion) LangEnabledBy(C ObjC,Wconversion)

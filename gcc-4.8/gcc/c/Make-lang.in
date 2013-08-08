@@ -163,7 +163,7 @@ c/c-decl.o : c/c-decl.c c/c-lang.h $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TM_H) \
 	$(HASH_TABLE_H) $(LANGHOOKS_DEF_H) \
 	dumpfile.h $(C_COMMON_H) $(CPPLIB_H) $(DIAGNOSTIC_CORE_H) \
 	$(INPUT_H) langhooks.h pointer-set.h tree-iterator.h \
-	$(PLUGIN_H) c-family/c-ada-spec.h c-family/c-objc.h
+	$(PLUGIN_H) c-family/c-ada-spec.h c-family/c-objc.h l-ipo.h
 
 c/c-errors.o: c/c-errors.c $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TM_H) $(TREE_H) \
 	$(C_TREE_H) $(FLAGS_H) $(DIAGNOSTIC_H) $(TM_P_H)
@@ -190,5 +190,5 @@ c/c-parser.o : c/c-parser.c $(CONFIG_H) $(SYSTEM_H) coretypes.h \
 c/c-typeck.o : c/c-typeck.c c/c-lang.h $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TM_H) \
 	$(TREE_H) $(C_TREE_H) $(TARGET_H) $(FLAGS_H) intl.h \
 	langhooks.h tree-iterator.h $(BITMAP_H) $(GIMPLE_H) \
-	c-family/c-objc.h c-family/c-common.h
+	c-family/c-objc.h c-family/c-common.h l-ipo.h
 

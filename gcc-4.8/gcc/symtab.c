@@ -101,7 +101,7 @@ eq_assembler_name (const void *p1, const void *p2)
 
 /* Insert NODE to assembler name hash.  */
 
-static void
+void
 insert_to_assembler_name_hash (symtab_node node)
 {
   if (is_a <varpool_node> (node) && DECL_HARD_REGISTER (node->symbol.decl))
@@ -127,7 +127,7 @@ insert_to_assembler_name_hash (symtab_node node)
 
 /* Remove NODE from assembler name hash.  */
 
-static void
+void
 unlink_from_assembler_name_hash (symtab_node node)
 {
   if (assembler_name_hash)

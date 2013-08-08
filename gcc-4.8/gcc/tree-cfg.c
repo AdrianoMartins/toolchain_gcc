@@ -26,6 +26,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tm_p.h"
 #include "basic-block.h"
 #include "flags.h"
+#include "input.h"
 #include "function.h"
 #include "ggc.h"
 #include "gimple-pretty-print.h"
@@ -39,6 +40,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "value-prof.h"
 #include "pointer-set.h"
 #include "tree-inline.h"
+#include "l-ipo.h"
 #include "target.h"
 
 /* This file contains functions for building the Control Flow Graph (CFG)
@@ -95,13 +97,13 @@ static void factor_computed_gotos (void);
 
 /* Edges.  */
 static void make_edges (void);
+static void assign_discriminators (void);
 static void make_cond_expr_edges (basic_block);
 static void make_gimple_switch_edges (basic_block);
 static void make_goto_expr_edges (basic_block);
 static void make_gimple_asm_edges (basic_block);
 static unsigned int locus_map_hash (const void *);
 static int locus_map_eq (const void *, const void *);
-static void assign_discriminator (location_t, basic_block);
 static edge gimple_redirect_edge_and_branch (edge, basic_block);
 static edge gimple_try_redirect_by_replacing_jump (edge, basic_block);
 static unsigned int split_critical_edges (void);
@@ -204,6 +206,7 @@ build_gimple_cfg (gimple_seq seq)
   discriminator_per_locus = htab_create (13, locus_map_hash, locus_map_eq,
                                          free);
   make_edges ();
+  assign_discriminators ();
   cleanup_dead_labels ();
   htab_delete (discriminator_per_locus);
 }
@@ -661,11 +664,7 @@ make_edges (void)
 	fallthru = true;
 
       if (fallthru)
-        {
-	  make_edge (bb, bb->next_bb, EDGE_FALLTHRU);
-	  if (last)
-            assign_discriminator (gimple_location (last), bb->next_bb);
-	}
+	make_edge (bb, bb->next_bb, EDGE_FALLTHRU);
     }
 
   if (root_omp_region)
@@ -681,7 +680,7 @@ make_edges (void)
 static unsigned int
 locus_map_hash (const void *item)
 {
-  return ((const struct locus_discrim_map *) item)->locus;
+  return LOCATION_LINE (((const struct locus_discrim_map *) item)->locus);
 }
 
 /* Equality function for the locus-to-discriminator map.  VA and VB
@@ -692,7 +691,7 @@ locus_map_eq (const void *va, const void *vb)
 {
   const struct locus_discrim_map *a = (const struct locus_discrim_map *) va;
   const struct locus_discrim_map *b = (const struct locus_discrim_map *) vb;
-  return a->locus == b->locus;
+  return LOCATION_LINE (a->locus) == LOCATION_LINE (b->locus);
 }
 
 /* Find the next available discriminator value for LOCUS.  The
@@ -745,22 +744,65 @@ same_line_p (location_t locus1, location_t locus2)
           && filename_cmp (from.file, to.file) == 0);
 }
 
-/* Assign a unique discriminator value to block BB if it begins at the same
-   LOCUS as its predecessor block.  */
+/* Assign a unique discriminator value to instructions in block BB that
+   have the same LOCUS as its predecessor block.  */
 
 static void
 assign_discriminator (location_t locus, basic_block bb)
 {
-  gimple first_in_to_bb, last_in_to_bb;
+  gimple_stmt_iterator gsi;
+  int discriminator;
 
-  if (locus == 0 || bb->discriminator != 0)
+  locus = map_discriminator_location (locus);
+
+  if (locus == UNKNOWN_LOCATION)
     return;
 
-  first_in_to_bb = first_non_label_stmt (bb);
-  last_in_to_bb = last_stmt (bb);
-  if ((first_in_to_bb && same_line_p (locus, gimple_location (first_in_to_bb)))
-      || (last_in_to_bb && same_line_p (locus, gimple_location (last_in_to_bb))))
-    bb->discriminator = next_discriminator_for_locus (locus);
+  discriminator = next_discriminator_for_locus (locus);
+
+  for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+    {
+      gimple stmt = gsi_stmt (gsi);
+      location_t stmt_locus = gimple_location (stmt);
+      if (same_line_p (locus, stmt_locus))
+	gimple_set_location (stmt,
+	    location_with_discriminator (stmt_locus, discriminator));
+    }
+}
+
+/* Assign discriminators to each basic block.  */
+
+static void
+assign_discriminators (void)
+{
+  basic_block bb;
+
+  FOR_EACH_BB (bb)
+    {
+      edge e;
+      edge_iterator ei;
+      gimple last = last_stmt (bb);
+      location_t locus = last ? gimple_location (last) : UNKNOWN_LOCATION;
+
+      if (locus == UNKNOWN_LOCATION)
+	continue;
+
+      FOR_EACH_EDGE (e, ei, bb->succs)
+	{
+	  gimple first = first_non_label_stmt (e->dest);
+	  gimple last = last_stmt (e->dest);
+	  if ((first && same_line_p (locus, gimple_location (first)))
+	      || (last && same_line_p (locus, gimple_location (last))))
+	    {
+	      if (((first && has_discriminator (gimple_location (first)))
+		   || (last && has_discriminator (gimple_location (last))))
+		  && !has_discriminator (locus))
+		assign_discriminator (locus, bb);
+	      else
+		assign_discriminator (locus, e->dest);
+	    }
+	}
+    }
 }
 
 /* Create the edges for a GIMPLE_COND starting at block BB.  */
@@ -773,12 +815,9 @@ make_cond_expr_edges (basic_block bb)
   basic_block then_bb, else_bb;
   tree then_label, else_label;
   edge e;
-  location_t entry_locus;
 
   gcc_assert (entry);
   gcc_assert (gimple_code (entry) == GIMPLE_COND);
-
-  entry_locus = gimple_location (entry);
 
   /* Entry basic blocks for each component.  */
   then_label = gimple_cond_true_label (entry);
@@ -789,14 +828,10 @@ make_cond_expr_edges (basic_block bb)
   else_stmt = first_stmt (else_bb);
 
   e = make_edge (bb, then_bb, EDGE_TRUE_VALUE);
-  assign_discriminator (entry_locus, then_bb);
   e->goto_locus = gimple_location (then_stmt);
   e = make_edge (bb, else_bb, EDGE_FALSE_VALUE);
   if (e)
-    {
-      assign_discriminator (entry_locus, else_bb);
-      e->goto_locus = gimple_location (else_stmt);
-    }
+    e->goto_locus = gimple_location (else_stmt);
 
   /* We do not need the labels anymore.  */
   gimple_cond_set_true_label (entry, NULL_TREE);
@@ -916,10 +951,7 @@ static void
 make_gimple_switch_edges (basic_block bb)
 {
   gimple entry = last_stmt (bb);
-  location_t entry_locus;
   size_t i, n;
-
-  entry_locus = gimple_location (entry);
 
   n = gimple_switch_num_labels (entry);
 
@@ -928,7 +960,6 @@ make_gimple_switch_edges (basic_block bb)
       tree lab = CASE_LABEL (gimple_switch_label (entry, i));
       basic_block label_bb = label_to_block (lab);
       make_edge (bb, label_bb, 0);
-      assign_discriminator (entry_locus, label_bb);
     }
 }
 
@@ -1003,7 +1034,6 @@ make_goto_expr_edges (basic_block bb)
       basic_block label_bb = label_to_block (dest);
       edge e = make_edge (bb, label_bb, EDGE_FALLTHRU);
       e->goto_locus = gimple_location (goto_t);
-      assign_discriminator (e->goto_locus, label_bb);
       gsi_remove (&last, true);
       return;
     }
@@ -1018,7 +1048,6 @@ static void
 make_gimple_asm_edges (basic_block bb)
 {
   gimple stmt = last_stmt (bb);
-  location_t stmt_loc = gimple_location (stmt);
   int i, n = gimple_asm_nlabels (stmt);
 
   for (i = 0; i < n; ++i)
@@ -1026,7 +1055,6 @@ make_gimple_asm_edges (basic_block bb)
       tree label = TREE_VALUE (gimple_asm_label_op (stmt, i));
       basic_block label_bb = label_to_block (label);
       make_edge (bb, label_bb, 0);
-      assign_discriminator (stmt_loc, label_bb);
     }
 }
 
@@ -1419,6 +1447,13 @@ gimple_can_merge_blocks_p (basic_block a, basic_block b)
   if (b == EXIT_BLOCK_PTR)
     return false;
 
+  /* Some functions may have long jumps but not marked
+     properly to be control flow alterring. FIXME
+     this is a kludge  */
+  if (L_IPO_COMP_MODE && profile_info
+      && b->count != a->count)
+    return false;
+
   /* If A ends by a statement causing exceptions or something similar, we
      cannot merge the blocks.  */
   stmt = last_stmt (a);
@@ -1722,6 +1757,14 @@ gimple_merge_blocks (basic_block a, basic_block b)
 	  gsi_next (&gsi);
 	}
     }
+
+  /* When merging two BBs, if their counts are different, the larger
+     count is selected as the new bb count.  */
+  if (flag_auto_profile && a->count != b->count)
+    {
+      a->count = MAX (a->count, b->count);
+      a->frequency = MAX (a->frequency, b->frequency);
+    } 
 
   /* Merge the sequences.  */
   last = gsi_last_bb (a);
@@ -2857,7 +2900,8 @@ verify_types_in_gimple_reference (tree expr, bool require_lvalue)
       /* Verify if the reference array element types are compatible.  */
       if (TREE_CODE (expr) == ARRAY_REF
 	  && !useless_type_conversion_p (TREE_TYPE (expr),
-					 TREE_TYPE (TREE_TYPE (op))))
+					 TREE_TYPE (TREE_TYPE (op)))
+          && !L_IPO_COMP_MODE)
 	{
 	  error ("type mismatch in array reference");
 	  debug_generic_stmt (TREE_TYPE (expr));
@@ -3072,7 +3116,8 @@ verify_gimple_call (gimple stmt)
 	 returning java.lang.Object.
 	 For now simply allow arbitrary pointer type conversions.  */
       && !(POINTER_TYPE_P (TREE_TYPE (gimple_call_lhs (stmt)))
-	   && POINTER_TYPE_P (TREE_TYPE (fntype))))
+	   && POINTER_TYPE_P (TREE_TYPE (fntype)))
+      && !L_IPO_COMP_MODE)
     {
       error ("invalid conversion in gimple call");
       debug_generic_stmt (TREE_TYPE (gimple_call_lhs (stmt)));
@@ -3803,7 +3848,9 @@ verify_gimple_assign_single (gimple stmt)
   tree rhs1_type = TREE_TYPE (rhs1);
   bool res = false;
 
-  if (!useless_type_conversion_p (lhs_type, rhs1_type))
+  if (!useless_type_conversion_p (lhs_type, rhs1_type)
+      /* Relax for LIPO. TODO add structural or name check.  */
+      && !L_IPO_COMP_MODE)
     {
       error ("non-trivial conversion at assignment");
       debug_generic_expr (lhs_type);
@@ -4045,7 +4092,8 @@ verify_gimple_return (gimple stmt)
 	  && DECL_BY_REFERENCE (SSA_NAME_VAR (op))))
     op = TREE_TYPE (op);
 
-  if (!useless_type_conversion_p (restype, TREE_TYPE (op)))
+  if (!useless_type_conversion_p (restype, TREE_TYPE (op))
+      && !L_IPO_COMP_MODE)
     {
       error ("invalid conversion in return statement");
       debug_generic_stmt (restype);
@@ -4864,7 +4912,13 @@ gimple_verify_flow_info (void)
       if (gimple_code (stmt) == GIMPLE_LABEL)
 	continue;
 
-      err |= verify_eh_edges (stmt);
+      /* FIXME: there does seem to be an overassertion in eh
+         edge verification -- triggered by -fdyn-ipa: after eh
+         cleanup, there might not be an direct edge from a BB
+         to the parent try block's catch region, but the catch
+         region is still reachable.  */ 
+      if (!flag_dyn_ipa)
+        err |= verify_eh_edges (stmt);
 
       if (is_ctrl_stmt (stmt))
 	{
