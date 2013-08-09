@@ -54,4 +54,10 @@ extern gcov_type *get_coverage_counts (unsigned /*counter*/,
 
 extern tree get_gcov_type (void);
 
+extern struct cgraph_node * find_func_by_global_id (unsigned HOST_WIDE_INT gid,
+						    bool);
+
+extern bool incompatible_cl_args (struct gcov_module_info *,
+				  struct gcov_module_info *);
+
 #endif

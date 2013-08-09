@@ -113,6 +113,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "target.h"
 #include "ipa-inline.h"
 #include "ipa-utils.h"
+#include "auto-profile.h"
 
 /* Statistics we collect about inlining algorithm.  */
 static int overall_size;
@@ -403,6 +404,8 @@ want_early_inline_function_p (struct cgraph_edge *e)
   struct cgraph_node *callee = cgraph_function_or_thunk_node (e->callee, NULL);
 
   if (DECL_DISREGARD_INLINE_LIMITS (callee->symbol.decl))
+    ;
+  else if (flag_auto_profile && afdo_callsite_hot_enough_for_early_inline (e))
     ;
   else if (!DECL_DECLARED_INLINE_P (callee->symbol.decl)
 	   && !flag_inline_small_functions)

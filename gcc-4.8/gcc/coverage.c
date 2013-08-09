@@ -49,6 +49,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "intl.h"
 #include "filenames.h"
 #include "target.h"
+#include "auto-profile.h"
 
 #include "gcov-io.h"
 #include "gcov-io.c"
@@ -172,7 +173,6 @@ counts_entry::remove (value_type *entry)
 static hash_table <counts_entry> counts_hash;
 
 /* Read in the counts file, if available.  */
-
 static void
 read_counts_file (void)
 {
@@ -1113,8 +1113,10 @@ coverage_init (const char *filename)
 
   bbg_file_stamp = local_tick;
   
-  if (flag_branch_probabilities)
+  if (flag_branch_probabilities && !flag_auto_profile)
     read_counts_file ();
+  if (flag_auto_profile)
+    init_auto_profile ();
 
   /* Name of bbg file.  */
   if (flag_test_coverage && !flag_compare_debug)

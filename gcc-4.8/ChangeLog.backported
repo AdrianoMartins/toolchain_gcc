@@ -1,3 +1,98 @@
+http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=201615
+2013-08-09  Dehao Chen  <dehao@google.com>
+
+    Refactor the AutoFDO implementation.
+    * Use new profile format (tree based).
+    * Rewrite autofdo-profile.c using C++.
+    * Remove dependencies in other modules.
+
+    The new profile format has the following benefits:
+    * More space efficient: profile size is usually 30%~40% as the original format.
+    * Make iterative indirect call promotion possible.
+    * Does not depend on file name any more. (more tolerant to source change)
+
+http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=201022
+2013-07-18  Dehao Chen  <dehao@google.com>
+
+    * gcc/auto-profile.c
+    (read_profile): Fix the warning treated as error during bootstrapping.
+
+http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=201021
+2013-07-18  Dehao Chen  <dehao@google.com>
+
+    * gcc/auto-profile.c
+    (read_profile): Disable version number check for AutoFDO for now.
+
+http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=201016
+2013-07-17  Dehao Chen  <dehao@google.com>
+    
+    * gcc/auto-profile.c (get_inline_stack_size_by_edge): Remove.
+    (get_inline_stack_by_edge): Remove.
+    (get_callsite_count): Use alternate function.
+
+http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=199593
+2013-06-02  Dehao Chen  <dehao@google.com>
+    
+    * gcc/auto-profile.c (afdo_stack_eq): Fix incorrect hash_eq function.
+    (process_auto_profile): Fix uninitialized memory error.
+
+http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=199268
+2013-05-23  Dehao Chen  <dehao@google.com>
+    
+    * gcc/profile.h (add_working_set): New Function.
+    * gcc/regs.h (REG_FREQ_FROM_BB): New Function.
+    * gcc/common.opt (fauto-profile): New option.
+    * gcc/testsuite/gcc.dg/record-compilation-info-in-elf-1.c: New Test.
+    * gcc/gcov-io.h (GCOV_TAG_AFDO_FILE_NAMES): New Macro.
+    (GCOV_TAG_AFDO_FUNCTION): New Macro.
+    (GCOV_TAG_AFDO_MODULE_GROUPING): New Macro.
+    (GCOV_TAG_AFDO_WORKING_SET): New Macro.
+    * gcc/cfg-flags.def (DEF_BASIC_BLOCK_FLAG): New Flag.
+    (DEF_EDGE_FLAG): New FLag.
+    * gcc/auto-profile.c: New File.
+    * gcc/auto-profile.h: New File.
+    * gcc/cgraphbuild.c (add_fake_indirect_call_edges): AutoFDO support.
+    (build_cgraph_edges): Likewise.
+    * gcc/opts.c (common_handle_option): Likewise.
+    * gcc/opts.h (set_struct_debug_option): Likewise.
+    * gcc/tree-cfg.c (gimple_merge_blocks): Likewise.
+    * gcc/cgraphclones.c (cgraph_clone_node): Likewise.
+    (clone_function_name): Likewise.
+    * gcc/value-prof.c (gimple_ic_transform): Likewise.
+    (gimple_alloc_histogram_value): Likewise.
+    (cgraph_init_gid_map): Likewise.
+    (find_func_by_global_id): Likewise.
+    (gimple_ic_transform_mult_targ): Likewise.
+    * gcc/value-prof.h (gimple_alloc_histogram_value): Likewise.
+    * gcc/tree-pass.h (pass_ipa_auto_profile): Likewise.
+    * gcc/passes.c (init_optimization_passes): Likewise.
+    * gcc/cgraphunit.c (finalize_compilation_unit): Likewise.
+    * gcc/tree-ssa-live.c (remove_unused_scope_block_p): Likewise.
+    * gcc/ipa-inline.c (want_early_inline_function_p): Likewise.
+    (edge_hot_enough_p): Likewise.
+    * gcc/c-family/c-opts.c (c_common_parse_file): Likewise.
+    * gcc/loop-unroll.c (decide_unroll_runtime_iterations): Likewise.
+    * gcc/dwarf2out.c (auto_profile_debug_hooks): Likewise.
+    * gcc/timevar.def (TV_IPA_AUTOFDO): Likewise.
+    * gcc/ira-int.h (REG_FREQ_FROM_EDGE_FREQ): Likewise.
+    * gcc/toplev.c (compile_file): Likewise.
+    (process_options): Likewise.
+    (do_compile): Likewise.
+    * gcc/tree-profile.c (direct_call_profiling): Likewise.
+    (gate_tree_profile_ipa): Likewise.
+    * gcc/tree-inline.c (copy_edges_for_bb): Likewise.
+    * gcc/predict.c (compute_function_frequency): Likewise.
+    (rebuild_frequencies): Likewise.
+    * gcc/debug.h (auto_profile_debug_hooks): Likewise
+    * gcc/coverage.c (has_incompatible_cg_opts): Likewise.
+    (incompatible_cl_args): Likewise.
+    (coverage_init): Likewise.
+    (coverage_has_asm_stmt): Likewise.
+    (write_compilation_info_to_asm): Likewise.
+    * gcc/coverage.h (find_func_by_global_id): Likewise.
+    (incompatible_cl_args): Likewise.
+    * gcc/profile.c (branch_prob): Likewise.
+
 http://gcc.gnu.org/viewcvs/gcc?view=rev&rev=198332
 2013-04-26  Jakub Jelinek  <jakub@redhat.com>
 

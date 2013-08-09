@@ -122,7 +122,7 @@ static bool gimple_ic_transform (gimple_stmt_iterator *);
 
 /* Allocate histogram value.  */
 
-static histogram_value
+histogram_value
 gimple_alloc_histogram_value (struct function *fun ATTRIBUTE_UNUSED,
 			      enum hist_type type, gimple stmt, tree value)
 {
@@ -1270,8 +1270,7 @@ gimple_ic (gimple icall_stmt, struct cgraph_node *direct_call,
 
   /* Build an EH edge for the direct call if necessary.  */
   lp_nr = lookup_stmt_eh_lp (icall_stmt);
-  if (lp_nr != 0
-      && stmt_could_throw_p (dcall_stmt))
+  if (lp_nr > 0 && stmt_could_throw_p (dcall_stmt))
     {
       edge e_eh, e;
       edge_iterator ei;

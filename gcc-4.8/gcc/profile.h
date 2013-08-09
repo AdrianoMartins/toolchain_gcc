@@ -48,4 +48,6 @@ extern void del_node_map (void);
 
 extern void compute_working_sets (void);
 
+extern void add_working_set (gcov_working_set_t *);
+
 #endif /* PROFILE_H */

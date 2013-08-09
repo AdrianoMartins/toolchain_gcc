@@ -2831,7 +2831,8 @@ compute_function_frequency (void)
   if (DECL_STATIC_DESTRUCTOR (current_function_decl))
     node->only_called_at_exit = true;
 
-  if (!profile_info || !flag_branch_probabilities)
+  if (!profile_info || !flag_branch_probabilities
+      || (flag_auto_profile && profile_status == PROFILE_GUESSED))
     {
       int flags = flags_from_decl_or_type (current_function_decl);
       if (lookup_attribute ("cold", DECL_ATTRIBUTES (current_function_decl))
